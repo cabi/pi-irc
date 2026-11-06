@@ -14,7 +14,8 @@ export const IRC_OPS = ["connect", "status", "roster", "send", "read", "join", "
 export type IrcOp = (typeof IRC_OPS)[number];
 
 export interface IrcToolParams {
-	op: IrcOp;
+	/** Validated at runtime — the pi tool schema can't be trusted blindly. */
+	op: string;
 	/** send: channel or nick; default = project channel. */
 	target?: string;
 	/** send: message text. */
@@ -47,10 +48,10 @@ function fmtTime(ts: number): string {
 /** Execute one `irc` op against a live (or to-be-booted) session. */
 export async function executeIrcOp(
 	ensureSession: () => Promise<IrcSession>,
-	op: IrcOp,
+	op: string,
 	params: IrcToolParams,
 ): Promise<IrcToolResult> {
-	if (!IRC_OPS.includes(op)) {
+	if (!(IRC_OPS as readonly string[]).includes(op)) {
 		throw new Error(`unknown op "${op}" — use one of: ${IRC_OPS.join(", ")}`);
 	}
 
@@ -151,4 +152,5 @@ export async function executeIrcOp(
 			);
 		}
 	}
+	throw new Error(`unhandled op "${op}"`);
 }

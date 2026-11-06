@@ -35,6 +35,7 @@ export async function loadViaPi(tsPath) {
 		const jiti = createJiti(import.meta.url, {
 			alias: {
 				"@earendil-works/pi-tui": path.join(nm, "@earendil-works", "pi-tui", "dist", "index.js"),
+			"@earendil-works/pi-ai": path.join(nm, "@earendil-works", "pi-ai", "dist", "index.js"),
 				"@earendil-works/pi-coding-agent": path.join(
 					nm,
 					"@earendil-works",

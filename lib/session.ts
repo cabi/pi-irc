@@ -26,7 +26,7 @@ import type { Peer } from "./roster.ts";
 import { Roster } from "./roster.ts";
 import { Channels } from "./channels.ts";
 import { DeliveryQueue } from "./delivery.ts";
-import { wire } from "./wire.ts";
+import { wire, type IrcMessage } from "./wire.ts";
 
 export interface SessionDeps {
 	/** Injectable for tests: an already-registered client (skips PASS/001). */
@@ -113,10 +113,17 @@ export class IrcSession extends EventEmitter {
 				timeoutMs: BOOT_TIMEOUT_MS,
 			});
 			if (password) client.sendRaw(wire.pass(password));
+			// Waiters attach before registration starts: 001..376 can arrive
+			// in a single chunk, and a listener attached after `await` would
+			// miss motdEnd entirely.
+			const registeredP = onceOrThrow(client, "registered", "error", BOOT_TIMEOUT_MS, "registration");
+			const motdP = onceOrThrow(client, "motdEnd", "error", BOOT_TIMEOUT_MS, "registration (MOTD)");
+			if (password) client.sendRaw(wire.pass(password));
 			client.startRegistration();
-			await onceOrThrow(client, "registered", "error", BOOT_TIMEOUT_MS, "registration");
+			await registeredP;
+			await motdP;
 		}
-		await onceOrThrow(client, "motdEnd", "error", BOOT_TIMEOUT_MS, "registration (MOTD)");
+		if (deps.client) await onceOrThrow(client, "motdEnd", "error", BOOT_TIMEOUT_MS, "registration (MOTD)");
 
 		const session = new IrcSession(config, identity, client, now);
 
@@ -126,11 +133,11 @@ export class IrcSession extends EventEmitter {
 		// async on a socket) join echoes cannot slip past them.
 		const chan = session.projectChannel;
 		const extra = config.channels.defaults.filter((c) => c.toLowerCase() !== chan.toLowerCase());
-		const projectJoined = onceOrThrow(
+		const projectJoined = onceOrThrow<{ self: boolean; channel: string }>(
 			client, "join", "error", BOOT_TIMEOUT_MS, `joining ${chan}`,
 			(e) => e.self && e.channel.toLowerCase() === chan.toLowerCase(),
 		);
-		const extrasJoined = extra.map((c) => onceOrThrow(
+		const extrasJoined = extra.map((c) => onceOrThrow<{ self: boolean; channel: string }>(
 			client, "join", "error", BOOT_TIMEOUT_MS, `joining ${c}`,
 			(e) => e.self && e.channel.toLowerCase() === c.toLowerCase(),
 		));
@@ -140,7 +147,7 @@ export class IrcSession extends EventEmitter {
 
 		// Seed the roster: WHO returns realnames → agent/human mapping.
 		client.who(chan);
-		await onceOrThrow(client, "message", "error", BOOT_TIMEOUT_MS, `WHO ${chan}`, (m) =>
+		await onceOrThrow<IrcMessage>(client, "message", "error", BOOT_TIMEOUT_MS, `WHO ${chan}`, (m) =>
 			m.command === String(NUMERICS.RPL_ENDOFWHO) && m.params[1]?.toLowerCase() === chan.toLowerCase(),
 		);
 
@@ -311,7 +318,7 @@ function renderStamp(template: string, slug: string, now: number): string {
  * `satisfy` filters multi-fire events (e.g. our JOIN among others').
  */
 function onceOrThrow<T>(
-	emitter: { on(name: string, cb: (e: T) => void): unknown; off(name: string, cb: (e: T) => void): unknown },
+	emitter: EventEmitter,
 	event: string,
 	errorEvent: string,
 	timeoutMs: number,

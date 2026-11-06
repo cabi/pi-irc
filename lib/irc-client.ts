@@ -18,6 +18,8 @@ export interface Transport extends EventEmitter {
 	send(line: string): void;
 	close(): void;
 	destroy(): void;
+	/** Socket transports also own connection; fakes skip it (client injected). */
+	connect(opts: { host: string; port: number; tls: boolean; timeoutMs: number }): Promise<void>;
 }
 
 export interface RegisterSpec {
