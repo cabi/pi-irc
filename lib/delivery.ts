@@ -60,6 +60,8 @@ export class DeliveryQueue {
 	private tokens: number;
 	private lastSendAt: number | null = null;
 	private timer: ReturnType<typeof setInterval> | null = null;
+	/** Paused while the link is down: items queue up, drain sends nothing. */
+	private paused = false;
 
 	constructor(
 		private readonly sender: (target: string, text: string) => void,
@@ -72,7 +74,6 @@ export class DeliveryQueue {
 	) {
 		this.tokens = this.opts.burst;
 	}
-
 	/** Queue a message; returns the number of chunks it was split into. */
 	enqueue(target: string, text: string): number {
 		if (this.opts.chunkLong) {
@@ -91,6 +92,7 @@ export class DeliveryQueue {
 	 */
 	drain(now = Date.now()): OutboundChunk[] {
 		const sent: OutboundChunk[] = [];
+		if (this.paused) return sent;
 		while (this.queue.length > 0) {
 			// Refill one token per interval since the last send.
 			if (this.tokens < this.opts.burst && this.lastSendAt !== null) {
@@ -105,7 +107,13 @@ export class DeliveryQueue {
 			const text = item.chunks[item.nextIndex];
 			let part: OutboundChunk["part"];
 			if (item.part) part = { i: item.nextIndex + 1, n: item.part.n };
-			this.sender(item.target, text);
+			try {
+				this.sender(item.target, text);
+			} catch {
+				// Transport died mid-drain: leave the chunk queued (indices
+				// untouched) — pause()/socketClosed owns the state from here.
+				break;
+			}
 			sent.push({ target: item.target, text, part });
 			item.nextIndex += 1;
 			this.tokens -= 1;
@@ -125,6 +133,17 @@ export class DeliveryQueue {
 	stop(): void {
 		if (this.timer) clearInterval(this.timer);
 		this.timer = null;
+	}
+
+	/** Pause while the link is down: enqueue keeps working, drain holds. */
+	pause(): void {
+		this.paused = true;
+	}
+
+	/** Resume after the link is back — flushes immediately. */
+	resume(): void {
+		this.paused = false;
+		this.drain();
 	}
 
 	/** Drop everything queued (e.g. on reconnect). */

@@ -11,7 +11,21 @@ import { fileURLToPath } from "node:url";
 export const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 export function repoFile(...parts) {
+
 	return path.join(REPO, ...parts);
+}
+
+export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Promise-based wait for one event; rejects on timeout so tests fail loudly. */
+export function once(emitter, event, timeoutMs = 5000) {
+	return new Promise((resolve, reject) => {
+		const t = setTimeout(() => reject(new Error(`once(${event}) timed out after ${timeoutMs}ms`)), timeoutMs);
+		emitter.once(event, (e) => {
+			clearTimeout(t);
+			resolve(e);
+		});
+	});
 }
 
 export async function loadViaPi(tsPath) {

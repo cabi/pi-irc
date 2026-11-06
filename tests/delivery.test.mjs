@@ -79,3 +79,28 @@ test("clear drops pending work; start/stop manage the timer", () => {
 	q.start();
 	q.stop(); // no throw, no dangling timer
 });
+
+test("pause holds the queue; resume flushes it; a dead sender keeps chunks queued", () => {
+	const sends = [];
+	let dead = false;
+	const q = new DeliveryQueue((t, x) => {
+		if (dead) throw new Error("send on closed socket");
+		sends.push(`${t}:${x}`);
+	});
+	q.pause();
+	q.enqueue("#chan", "while down 1");
+	q.enqueue("#chan", "while down 2");
+	assert.equal(q.drain(0).length, 0); // paused: nothing leaves
+	assert.equal(q.pending(), 2);
+
+	q.resume(); // unpause + immediate flush
+	assert.deepEqual(sends, ["#chan:while down 1", "#chan:while down 2"]);
+	assert.equal(q.pending(), 0);
+
+	dead = true;
+	q.enqueue("#chan", "mid-drain death");
+	assert.equal(q.drain(0).length, 0); // sender threw...
+	assert.equal(q.pending(), 1); // ...but the chunk survives for reconnect
+	dead = false;
+	assert.equal(q.drain(0).length, 1); // and goes out once the link is back
+});

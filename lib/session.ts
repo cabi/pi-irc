@@ -246,7 +246,7 @@ export class IrcSession extends EventEmitter {
 	 */
 	#onDrop(): void {
 		if (this.stopped || !this.#reconnect) return;
-		this.delivery.stop();
+		this.delivery.pause();
 		this.#scheduleReconnect();
 	}
 
@@ -319,8 +319,7 @@ export class IrcSession extends EventEmitter {
 			}
 		}
 
-		this.delivery.start();
-		this.delivery.drain(); // flush whatever queued while the link was down
+		this.delivery.resume(); // unpause and flush whatever queued while down
 	}
 
 	#applyNumeric(m: { command: string; params: string[] }): void {
