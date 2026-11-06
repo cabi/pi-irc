@@ -136,6 +136,11 @@ export const wire = {
 	pong: (token: string) => formatLine({ command: "PONG", params: [token] }),
 	quit: (reason: string) => formatLine({ command: "QUIT", trailing: reason }),
 	who: (mask: string) => formatLine({ command: "WHO", params: [mask] }),
+	/** AWAY with a reason marks away; without one it clears (RFC 2812 §4.1). */
+	away: (reason?: string) =>
+		reason === undefined
+			? formatLine({ command: "AWAY" })
+			: formatLine({ command: "AWAY", trailing: reason }),
 	topic: (channel: string, topic?: string) =>
 		topic === undefined
 			? formatLine({ command: "TOPIC", params: [channel] })

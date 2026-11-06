@@ -146,3 +146,43 @@ test("enabled: boots against mock server, serves tool ops, wakes on DM, quits on
 		await srv.stop();
 	}
 });
+
+test("presence: agent_start marks AWAY, agent_settled returns", async () => {
+	const srv = new MockIrcServer();
+	const port = await srv.start();
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), "pi-irc-home-"));
+	writeGlobalConfig(home, port);
+	const prev = process.env.HOME;
+	process.env.HOME = home;
+	const proj = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "pi-irc-proj-")), "proj");
+	fs.mkdirSync(proj);
+	const prevCwd = process.cwd();
+	process.chdir(proj);
+	try {
+		const pi = mockPi();
+		extensionFactory(pi);
+		fire(pi, "session_start", { type: "session_start", reason: "startup" }, makeCtx("/tmp/proj"));
+		await pi.tools[0].execute("t1", { op: "status" }, undefined, undefined, makeCtx("/tmp/proj"));
+		const client = srv.lastClient();
+		client.lines = [];
+
+		fire(pi, "agent_start", { type: "agent_start" }, makeCtx("/tmp/proj"));
+		await new Promise((r) => setTimeout(r, 50));
+		assert.ok(
+			client.lines.some((l) => /^AWAY :busy since /.test(l)),
+			`AWAY sent on agent_start: ${client.lines}`,
+		);
+
+		client.lines = [];
+		fire(pi, "agent_settled", { type: "agent_settled" }, makeCtx("/tmp/proj"));
+		await new Promise((r) => setTimeout(r, 50));
+		assert.ok(client.lines.includes("AWAY"), `AWAY cleared on agent_settled: ${client.lines}`);
+
+		fire(pi, "session_shutdown", { type: "session_shutdown" }, makeCtx("/tmp/proj"));
+		await new Promise((r) => setTimeout(r, 50));
+	} finally {
+		process.env.HOME = prev;
+		process.chdir(prevCwd);
+		await srv.stop();
+	}
+});

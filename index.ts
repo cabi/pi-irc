@@ -55,6 +55,8 @@ export default function (pi: ExtensionAPI) {
 	let session: IrcSession | null = null;
 	let lastSessionId = "";
 	let notify: (message: string, type?: "info" | "warning" | "error") => void = () => {};
+	/** Busy presence mirrors the host agent's run state (AWAY while mid-run). */
+	let busy = false;
 
 	/** Lazily (re)bootstrap the IRC session; rejects loudly on hard failure. */
 	const ensureSession = (ctx: { cwd: string; sessionManager: { getSessionId(): string } }): Promise<IrcSession> => {
@@ -73,6 +75,7 @@ export default function (pi: ExtensionAPI) {
 						{ deliverAs: "steer" },
 					);
 				});
+				if (busy) s.setBusy(true); // boot while mid-run: arrive already away
 				return s;
 			})
 			.catch((err: unknown) => {
@@ -117,6 +120,16 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify(`pi-irc: ${(err as Error).message}`, "warning");
 			}
 		},
+	});
+
+	// Busy presence: AWAY while the agent is mid-run, back when settled.
+	pi.on("agent_start", () => {
+		busy = true;
+		session?.setBusy(true);
+	});
+	pi.on("agent_settled", () => {
+		busy = false;
+		session?.setBusy(false);
 	});
 
 	pi.on("session_shutdown", () => {

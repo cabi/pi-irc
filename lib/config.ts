@@ -41,6 +41,12 @@ export interface CapabilitiesConfig {
 }
 
 export interface DeliveryConfig {
+	/**
+	 * Wake trust: nick globs (case-insensitive, `*` wildcard) allowed to wake
+	 * this session via DM. Roster-verified agents always wake. Empty = anyone
+	 * (fine on a private server, loud on shared ones).
+	 */
+	wakeAllowNicks: string[];
 	bufferMax: number;
 	wakeOnDirectMessage: boolean;
 	chunkLongSends: boolean;
@@ -79,7 +85,7 @@ const DEFAULTS = {
 	},
 	// IRCv3 caps to request; unknown ones are answered with CAP NAK and skipped.
 	capabilities: { request: ["extended-join", "server-time", "away-notify"] as string[] },
-	delivery: { bufferMax: 500, wakeOnDirectMessage: true, chunkLongSends: true },
+	delivery: { bufferMax: 500, wakeOnDirectMessage: true, chunkLongSends: true, wakeAllowNicks: [] as string[] },
 };
 
 export const GLOBAL_CONFIG_FILE = "pi-irc.json";
@@ -335,6 +341,10 @@ export function loadConfig(opts: {
 				"delivery.chunkLongSends",
 				delivery.chunkLongSends ?? DEFAULTS.delivery.chunkLongSends,
 			),
+			wakeAllowNicks:
+				delivery.wakeAllowNicks !== undefined
+					? strList("delivery.wakeAllowNicks", delivery.wakeAllowNicks)
+					: DEFAULTS.delivery.wakeAllowNicks,
 		},
 		projectSlug:
 			typeof slugOverride === "string" && slugOverride.length > 0

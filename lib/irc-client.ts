@@ -175,7 +175,11 @@ export class IrcClient extends EventEmitter {
 		this.#transport.send(wire.who(mask));
 	}
 
-	/** Query or set a channel topic; `topic === undefined` queries only. */
+	/** AWAY with a reason marks away; without one it clears (RFC 2812 §4.1). */
+	away(reason?: string): void {
+		this.#transport.send(wire.away(reason));
+	}
+
 	topic(channel: string, topic?: string): void {
 		this.#transport.send(wire.topic(channel, topic));
 	}

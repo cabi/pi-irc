@@ -28,6 +28,8 @@ export interface Peer {
 	parent?: string;
 	/** True for our own connection's nick. */
 	self: boolean;
+	/** Away flag as seen via WHO (H/G), away-notify, or our own AWAY (305/306). */
+	away?: boolean;
 }
 
 export interface RealnameInfo {
@@ -80,6 +82,7 @@ export class Roster {
 			project: patch.project ?? existing?.project,
 			lastSeen: patch.lastSeen ?? Date.now(),
 			self: patch.self ?? existing?.self ?? this.selfNick === key,
+			away: patch.away ?? existing?.away,
 		};
 		this.peers.set(key, peer);
 		return peer;

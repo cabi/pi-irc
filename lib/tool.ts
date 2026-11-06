@@ -99,6 +99,7 @@ export async function executeIrcOp(
 			const lines = peers.map((p) => {
 				const bits: string[] = [String(p.nick), p.kind === "agent" ? "agent" : "human"];
 				if (p.role) bits.push(String(p.role));
+			if (p.away) bits.push("busy");
 				if (p.project) bits.push(`project=${p.project}`);
 				if (p.session) bits.push(`session=${p.session}`);
 				if (p.self) bits.push("(me)");

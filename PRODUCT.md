@@ -60,6 +60,7 @@ pi-irc owns its configuration file(s), layered and merged (project over global):
   "delivery": {
     "bufferMax": 500,               // ring buffer size per conversation
     "wakeOnDirectMessage": true,    // steer idle agent on DM; channel chatter never wakes
+    "wakeAllowNicks": [],           // wake trust: nick globs (e.g. ["carsten", "ops-*"]); empty = anyone (private-server default)
     "chunkLongSends": true          // split >512-byte sends into protocol-legal PRIVMSGs
   }
 }
@@ -171,7 +172,7 @@ pi-irc/
 - **P3 (done)** real-server validation against ergo in Docker: `scripts/ergo-smoke.mjs` (10 checks — registration, CAP negotiation, channel auto-create, topic stamp, cross-client delivery, roster, wake, QUIT) and `scripts/ergo-agents.mjs` (10 checks — the two-agents + one-human coordination run). Surfaced and fixed: topic stamping must query TOPIC explicitly (ergo doesn't volunteer 331 on JOIN); topic stamp is best-effort when a human created the channel (creator-only op under mode +t)
 - **P4 (done)** hardening + packaging: KICK detection with buffered system line and delayed rejoin (`channels.kickRejoinDelayMs`, default 3 s, 0 stays out; `stop()` cancels); MIT license, npm metadata, `files` allowlist, `npm pack` verified at 33 kB / 20 files; 140 unit+integration tests, typecheck clean, both live ergo runs green (smoke 10 checks, coordination 10 checks). Accidental cross-server validation: against a local InspIRCd (port collision) the stack registered, joined, and delivered with caps silently empty — RFC 2812 degradation works outside ergo. No npm publish yet — the design gets falsified in real projects first.
 - **P5 (done)** real-project falsification against InspIRCd 4 (`irc.local`, stock modules plus `cap` + `ircv3_ctctags` + `ircv3_servertime`): both live runs green on the foreign daemon (smoke 10/10, coordination 10/10). Found and fixed in the field: (a) multi-cap `CAP REQ` is all-or-nothing — one unsupported cap bounced the whole set, so a NAK now falls back to per-cap REQs (8d24058); (b) config files are hand-edited — JSONC (comments, trailing commas) is now tolerated with a string-aware stripper (eb8633a); (c) a probe artifact taught the deeper lesson that session-dir attribution follows the startup dir — identity stays on `ctx.cwd` (06251fa). Live headless pi session in a scratch project (`pi --print`, global shim): correct nick/project/channel, roster with both humans, DM wake observed by the model mid-turn. 144 tests green.
-- **P6 (planned)** coordination parity with local buses (pi-intercom) over IRC DMs — spec below.
+- **P6 (done)** coordination parity with local buses (pi-intercom) over IRC DMs. Ask/reply RPC envelopes (`[pi-ask <id> timeout=600]` / `[pi-reply <id>]`, DM-only, lossless multi-part reassembly, late replies degrade to plain DMs) with `irc ask` / `irc reply` / `irc pending` ops — ask blocks up to the timeout, answers surface as system lines. Busy presence: `agent_start` → `AWAY :busy since hh:mm`, `agent_settled` → back; 305/306 confirmations land in the buffer; peers with away-notify see the roster busy flag live. Wake trust: `delivery.wakeAllowNicks` globs gate the DM wake (roster-verified agents always pass; blocked DMs buffer with one system note). Spec kept below. 175 tests green.
 
 ### P6 — Ask/Reply RPC, busy presence, wake trust
 

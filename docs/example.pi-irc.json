@@ -22,6 +22,7 @@
 	"delivery": {
 		"bufferMax": 500,
 		"wakeOnDirectMessage": true,
+		"wakeAllowNicks": [],
 		"chunkLongSends": true
 	}
 }

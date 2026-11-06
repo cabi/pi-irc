@@ -304,7 +304,7 @@ export class IrcSession extends EventEmitter {
 			if (e.self) this.channels.part(e.channel);
 			else this.channels.removeMember(e.channel, e.nick);
 		});
-		c.on("away", (e) => this.roster.touch(e.nick));
+		c.on("away", (e) => this.roster.touch(e.nick, { away: e.away }));
 		c.on("kick", (e) => this.#handleKick(e));
 		c.on("quit", (e) => {
 			this.channels.removeMemberEverywhere(e.nick);
@@ -450,11 +450,39 @@ export class IrcSession extends EventEmitter {
 				if (p[1]?.toLowerCase() === this.projectChannel.toLowerCase()) this.topicStampPending = true;
 				break;
 			}
-			case String(NUMERICS.RPL_WHOREPLY): {
+		case String(NUMERICS.RPL_UNAWAY): {
+			// 305: our own AWAY cleared (or never set).
+			this.roster.touch(this.client.realNick ?? this.client.nick, { away: false, self: true });
+			this.buffer.push({
+				conv: "*",
+				from: "*",
+				text: "presence: back (no longer away)",
+				kind: "system",
+			});
+			break;
+		}
+		case String(NUMERICS.RPL_NOWAWAY): {
+			// 306: server confirmed our AWAY.
+			this.roster.touch(this.client.realNick ?? this.client.nick, { away: true, self: true });
+			this.buffer.push({
+				conv: "*",
+				from: "*",
+				text: "presence: marked away (busy)",
+				kind: "system",
+			});
+			break;
+		}
+		case String(NUMERICS.RPL_WHOREPLY): {
 				// <me> <chan> <user> <host> <server> <nick> <flags> :<hop> <gecos>
 				const nick = p[5];
 				const gecos = p[7] ?? "";
-				if (nick) this.roster.applyRealname(nick, gecos.split(" ").slice(1).join(" ") || gecos);
+				if (nick) {
+					this.roster.applyRealname(nick, gecos.split(" ").slice(1).join(" ") || gecos);
+					// WHO flags: H = here, G = gone (away). Only meaningful when
+					// the server has no away-notify; touch() keeps the flag fresh.
+					const flags = p[6] ?? "";
+					this.roster.touch(nick, { away: flags.includes("G") ? true : flags.includes("H") ? false : undefined });
+				}
 				break;
 			}
 			default:
@@ -467,12 +495,45 @@ export class IrcSession extends EventEmitter {
 		return { attempt: this.#reconnectAttempt, nextInMs: Math.max(0, this.#nextAttemptAt - this.now()) };
 	}
 
-	#maybeWake(from: string, text: string): void {
+	/**
+	 * Busy presence: mark AWAY while the host agent is mid-run, clear it when
+	 * settled. RFC 2812 AWAY with no parameter un-aways. The server confirms
+	 * via 305/306, which flips our own roster flag; no local guessing.
+	 */
+	setBusy(busy: boolean): void {
+		if (busy) {
+			const since = new Date(this.now()).toISOString().slice(11, 16);
+			this.client.away(`busy since ${since}`);
+		} else {
+			this.client.away();
+		}
+	}
+
+#maybeWake(from: string, text: string): void {
 		if (!this.config.delivery.wakeOnDirectMessage) return;
+		const allow = this.config.delivery.wakeAllowNicks ?? [];
+		if (allow.length > 0 && !this.#wakeTrusted(from)) {
+			this.buffer.push({
+				conv: from,
+				from,
+				text: `(DM buffered — ${from} is not on the wake allowlist)`,
+				kind: "system",
+			});
+			return;
+		}
 		const now = this.now();
 		if (now - this.lastWakeAt < WAKE_QUIET_MS) return;
 		this.lastWakeAt = now;
 		this.emit("wake", { from, text });
+	}
+
+	/** Wake trust: roster-verified agents always pass; humans must match a glob. */
+	#wakeTrusted(nick: string): boolean {
+		const peer = this.roster.get(nick);
+		if (peer?.kind === "agent") return true;
+		return this.config.delivery.wakeAllowNicks.some((g) =>
+			new RegExp(`^${g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*")}$`, "i").test(nick),
+		);
 	}
 
 	// ---- Tool surface ----------------------------------------------------
@@ -500,6 +561,7 @@ export class IrcSession extends EventEmitter {
 			...(p.project ? { project: p.project } : {}),
 			...(p.session ? { session: p.session } : {}),
 			...(p.parent ? { parent: p.parent } : {}),
+			...(p.away ? { away: true } : {}),
 			lastSeen: new Date(p.lastSeen).toISOString(),
 			self: p.self,
 		});
@@ -510,7 +572,6 @@ export class IrcSession extends EventEmitter {
 		const to = target ?? this.projectChannel;
 		const chunks = this.delivery.enqueue(to, text);
 		this.delivery.drain();
-		return { target: to, chunks, pending: this.delivery.pending() };
 		return { target: to, chunks, pending: this.delivery.pending() };
 	}
 
