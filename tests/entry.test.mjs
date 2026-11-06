@@ -60,6 +60,12 @@ test("no config: registers nothing, notifies once on session_start", () => {
 	const home = fs.mkdtempSync(path.join(os.tmpdir(), "pi-irc-home-"));
 	const prev = process.env.HOME;
 	process.env.HOME = home;
+	// Identity derives the project slug from process.cwd() (the dir the
+	// human started pi in) — so run this test "inside" the fixture project.
+	const proj = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "pi-irc-proj-")), "proj");
+	fs.mkdirSync(proj);
+	const prevCwd = process.cwd();
+	process.chdir(proj);
 	try {
 		const pi = mockPi();
 		extensionFactory(pi);
@@ -73,6 +79,7 @@ test("no config: registers nothing, notifies once on session_start", () => {
 		assert.match(notes[0], /extension disabled/);
 	} finally {
 		process.env.HOME = prev;
+		process.chdir(prevCwd);
 	}
 });
 
@@ -83,6 +90,12 @@ test("enabled: boots against mock server, serves tool ops, wakes on DM, quits on
 	writeGlobalConfig(home, port);
 	const prev = process.env.HOME;
 	process.env.HOME = home;
+	// Identity derives the project slug from process.cwd() (the dir the
+	// human started pi in) — so run this test "inside" the fixture project.
+	const proj = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "pi-irc-proj-")), "proj");
+	fs.mkdirSync(proj);
+	const prevCwd = process.cwd();
+	process.chdir(proj);
 	try {
 		const pi = mockPi();
 		extensionFactory(pi);
