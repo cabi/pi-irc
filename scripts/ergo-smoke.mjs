@@ -6,7 +6,7 @@
  *   docker run -d --rm --name pi-irc-ergo \
  *     -v "$PWD/tests/ergo/ergo.yaml:/ergo/ergo.yaml:ro" \
  *     -v pi-irc-ergo-data:/ergo/data \
- *     -p 127.0.0.1:6667:6667 ergochat/ergo:latest
+ *     -p 127.0.0.1:16667:6667 ergochat/ergo:latest
  *   node scripts/ergo-smoke.mjs
  *   docker rm -f pi-irc-ergo   # and: docker volume rm pi-irc-ergo-data
  *
@@ -22,7 +22,7 @@ const { IrcSession } = await loadViaPi(repoFile("lib", "session.ts"));
 const { SUPPORTED_CAPS } = await loadViaPi(repoFile("lib", "caps.ts"));
 
 const HOST = "127.0.0.1";
-const PORT = Number(process.env.IRC_PORT ?? 6667);
+const PORT = Number(process.env.IRC_PORT ?? 16667);
 const CHANNEL = "#pi-smoke";
 
 const config = {
