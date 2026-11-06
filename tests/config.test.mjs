@@ -1,0 +1,139 @@
+// config loading: defaults, layering (global ← project), loud validation with
+// the offending key, disable-on-missing-global, slug sanitization.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { loadViaPi, repoFile } from "./helpers.mjs";
+
+const { loadConfig, projectSlug, renderChannelName, ConfigError } = await loadViaPi(
+	repoFile("lib", "config.ts"),
+);
+
+function tmpDir() {
+	return fs.mkdtempSync(path.join(os.tmpdir(), "pi-irc-cfg-"));
+}
+
+function writeConfig(dir, name, json) {
+	const file = path.join(dir, name);
+	fs.mkdirSync(path.dirname(file), { recursive: true });
+	fs.writeFileSync(file, JSON.stringify(json));
+	return file;
+}
+
+
+function expectConfigError(fn, key) {
+	try {
+		fn();
+	} catch (e) {
+		assert.ok(e instanceof ConfigError, `expected ConfigError for ${key}, got: ${e}`);
+		assert.equal(e.key, key, `error names the wrong key for ${key}`);
+		return;
+	}
+	assert.fail(`expected ConfigError for ${key}, but loadConfig returned`);
+}
+test("missing global config disables the extension (null)", () => {
+	const dir = tmpDir();
+	assert.equal(loadConfig({ globalPath: path.join(dir, "pi-irc.json") }), null);
+});
+
+test("empty global object plus project server works", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", {});
+	const projectPath = writeConfig(dir, "project/.pi/pi-irc.json", { server: { host: "irc.test" } });
+	const cfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "project") });
+	assert.equal(cfg.server.host, "irc.test");
+	assert.equal(cfg.server.port, 6697);
+	assert.equal(cfg.server.tls, true);
+});
+
+test("defaults land where files are silent", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", { server: { host: "irc.example.net" } });
+	const cfg = loadConfig({ globalPath, projectDir: "/work/My_Project" });
+	assert.equal(cfg.nick.template, "pi-{shortId}");
+	assert.equal(cfg.nick.maxLen, 30);
+	assert.equal(cfg.channels.projectTemplate, "#pi-{slug}");
+	assert.deepEqual(cfg.channels.defaults, []);
+	assert.equal(cfg.channels.autoCreate, true);
+	assert.equal(cfg.delivery.bufferMax, 500);
+	assert.equal(cfg.delivery.wakeOnDirectMessage, true);
+	assert.equal(cfg.delivery.chunkLongSends, true);
+	assert.equal(cfg.projectSlug, "my-project");
+});
+
+test("project section overrides global; defaults arrays replace, not concat", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", {
+		server: { host: "irc.example.net", port: 6667 },
+		channels: { defaults: ["#pi-lobby"] },
+	});
+	const projectPath = writeConfig(dir, "project/.pi/pi-irc.json", {
+		server: { port: 6697 },
+		channels: { defaults: ["#pi-project-ops"] },
+	});
+	const cfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "project") });
+	assert.equal(cfg.server.host, "irc.example.net");
+	assert.equal(cfg.server.port, 6697);
+	assert.deepEqual(cfg.channels.defaults, ["#pi-project-ops"]);
+});
+
+test("explicit project slug wins over directory name", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", { server: { host: "h" } });
+	const projectPath = writeConfig(dir, "project/.pi/pi-irc.json", { slug: "custom-slug" });
+	const cfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "project") });
+	assert.equal(cfg.projectSlug, "custom-slug");
+});
+
+test("wrong values fail loudly with the offending key", () => {
+	const dir = tmpDir();
+	const cases = [
+		[{ server: { host: 5 } }, "server.host"],
+		[{ server: { host: "h", port: 0 } }, "server.port"],
+		[{ server: { host: "h", tls: "yes" } }, "server.tls"],
+		[{ server: { host: "h" }, nick: { maxLen: 99 } }, "nick.maxLen"],
+		[{ server: { host: "h" }, channels: { defaults: ["lobby"] } }, "channels.defaults[0]"],
+		[{ server: { host: "h" }, channels: { defaults: [42] } }, "channels.defaults[0]"],
+		[{ server: { host: "h" }, delivery: { bufferMax: 0 } }, "delivery.bufferMax"],
+	];
+	for (const [body, key] of cases) {
+		const globalPath = writeConfig(dir, `bad-${key.replace(/\W/g, "_")}.json`, body);
+		expectConfigError(() => loadConfig({ globalPath, projectDir: dir }), key);
+	}
+});
+
+test("missing server.host is named, not generic", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "empty.json", {});
+	expectConfigError(() => loadConfig({ globalPath, projectDir: dir }), "server.host");
+});
+
+test("invalid JSON names the file", () => {
+	const dir = tmpDir();
+	const globalPath = path.join(dir, "broken.json");
+	fs.writeFileSync(globalPath, "{ nope");
+	assert.throws(() => loadConfig({ globalPath, projectDir: dir }), /invalid JSON/);
+});
+
+test("projectTemplate must render to a channel name", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "t.json", {
+		server: { host: "h" },
+		channels: { projectTemplate: "{slug}" },
+	});
+	expectConfigError(() => loadConfig({ globalPath, projectDir: dir }), "channels.projectTemplate");
+});
+
+test("projectSlug sanitizes directory names", () => {
+	assert.equal(projectSlug("My_Project"), "my-project");
+	assert.equal(projectSlug("pi.hashline edit pro!"), "pi-hashline-edit-pro");
+	assert.equal(projectSlug("---"), "project");
+	assert.equal(projectSlug("ÄÖÜ Project"), "project");
+	assert.equal(projectSlug("a".repeat(50)).length, 20);
+});
+
+test("renderChannelName joins slug into template", () => {
+	assert.equal(renderChannelName("#pi-{slug}", "demo"), "#pi-demo");
+});
