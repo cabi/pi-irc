@@ -64,9 +64,20 @@ Inside pi there is also a slash command that rides the same session:
 ## Develop
 
 ```sh
-npm test        # 97 tests, plain node:test, no network needed
+npm test        # 135 tests, plain node:test, no network needed
 npx tsc --noEmit
 node scripts/debug-boot.mjs   # manual bootstrap probe against the mock server
+```
+
+Real-server validation (ergo in Docker):
+
+```sh
+docker run -d --rm --name pi-irc-ergo \
+  -v "$PWD/tests/ergo/ergo.yaml:/ergo/ergo.yaml:ro" \
+  -v pi-irc-ergo-data:/ergo/data \
+  -p 127.0.0.1:16667:6667 ergochat/ergo:latest
+IRC_PORT=16667 node scripts/ergo-smoke.mjs   # 10 checks: caps, topic, roster, wake…
+docker rm -f pi-irc-ergo && docker volume rm pi-irc-ergo-data
 ```
 
 Layout, protocol scope, and roadmap live in `PRODUCT.md`.
