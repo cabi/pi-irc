@@ -1,6 +1,6 @@
 # pi-irc — IRC as the communication bus for pi agents and humans
 
-**Status:** product definition (phase P0) · **Repo:** `~/Projects/pi-extensions/pi-irc` · **Related:** `pi-intercom` (same-machine session messaging — pi-irc is the same need on an open protocol, with humans and remote machines in the loop)
+**Status:** P1 shipped — core client, session bootstrap, and the `irc` tool (97 tests, jiti/no-build) · **Repo:** `~/Projects/pi-extensions/pi-irc` · **Related:** `pi-intercom` (same-machine session messaging — pi-irc is the same need on an open protocol, with humans and remote machines in the loop)
 
 ## Vision
 
@@ -133,17 +133,21 @@ pi-irc/
   index.ts            # factory: config load, lifecycle wiring, tool registration
   lib/
     config.ts         # load/merge/validate pi-irc.json (global ← project), fail loudly
-    client.ts         # RFC 2812 client: socket, registration, parser, PING/PONG, reconnect
-    numerics.ts       # numeric reply table, 2812 + 1459 compat notes, unknown-code fallback
+    wire.ts           # RFC 2812 line codec: parse, format, 512-byte guards, builders
+    irc-socket.ts     # TLS/plain TCP transport (node:tls, node:net)
+    irc-client.ts     # registration, numeric dispatch, PING/PONG, typed client events
+    session.ts        # bootstrap orchestration: joins, topic stamp, WHO roster seed
     identity.ts       # nick rendering, collision retry, realname metadata encode/decode
     channels.ts       # project-channel bootstrap, topic stamp, defaults, join/part state
     roster.ts         # NAMES/WHO(X)/event stream → agent(main|sub)/human mapping
-    buffer.ts         # ring buffer, read cursors, unread counts, mention detection
+    buffer.ts         # ring buffer, read cursors, unread counts
     delivery.ts       # wake-on-DM steering, send queue, flood limiter, chunking
+    tool.ts           # the `irc` tool: op dispatch over prepared session state
   tests/
-    mock-server.mjs   # scripted RFC 2812 server for deterministic numerics/collisions
-    smoke.mjs         # bootstrap, first-join creation, two-session exchange, reconnect
-```
+    mock-irc-server.mjs  # scripted RFC 2812 server: deterministic numerics, collisions
+    *.test.mjs           # unit + integration suites (97 tests, plain node:test)
+  scripts/
+    debug-boot.mjs       # manual bootstrap probe against the mock server
 
 ## Security & trust
 
@@ -159,12 +163,11 @@ pi-irc/
 
 ## Roadmap
 
-- **P0 (done)** product definition, glossary, ADRs
-- **P1** core: config, client, identity, channel bootstrap, roster, buffer, `irc` tool (connect/status/roster/send/read/join/part)
-- **P2** robustness: reconnect/backoff, flood limiter, IRCv3 caps, wake-on-DM, `/irc` slash commands
-- **P3** smoke suite + ergo live test + validation run (two agents + one human)
-- **P4** hardening, README, packaging prep (npm package only after the design is falsified)
-
+- **P0 (done)** product definition, glossary, ADRs (docs/decisions/)
+- **P1 (done)** core: config, wire/transport/client, session bootstrap, identity, channel bootstrap, roster, buffer, delivery — `irc` tool with all 8 ops; wake-on-DM and the flood limiter shipped here, ahead of plan; 97 tests
+- **P2** robustness: reconnect with backoff + rejoin, IRCv3 caps (server-time, extended-join, multi-prefix), `/irc` slash commands
+- **P3** ergo live container test + validation run (two agents + one human coordinating through IRC only)
+- **P4** hardening, packaging prep (npm package only after the design is falsified)
 ## Terms
 
 | Term | Meaning |

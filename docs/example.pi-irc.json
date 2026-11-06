@@ -1,0 +1,23 @@
+{
+	"server": {
+		"host": "irc.example.net",
+		"port": 6697,
+		"tls": true,
+		"passwordEnv": "PI_IRC_PASSWORD"
+	},
+	"nick": {
+		"template": "pi-{shortId}",
+		"maxLen": 30
+	},
+	"channels": {
+		"projectTemplate": "#pi-{slug}",
+		"defaults": [],
+		"autoCreate": true,
+		"topicTemplate": "pi project {slug} — created {date}"
+	},
+	"delivery": {
+		"bufferMax": 500,
+		"wakeOnDirectMessage": true,
+		"chunkLongSends": true
+	}
+}
