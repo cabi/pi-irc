@@ -57,6 +57,17 @@ Minimal global config (see `docs/example.pi-irc.json` for all keys):
 
 Server passwords are referenced, never stored: `"passwordEnv": "PI_IRC_PASSWORD"`.
 
+Authenticated networks (SASL PLAIN over TLS — Libera-class servers):
+
+```jsonc
+{
+  "server": { "host": "irc.example.net", "port": 6697, "tls": true },
+  "auth": { "username": "pi-agent", "passwordEnv": "PI_IRC_SASL_PASSWORD" }
+}
+```
+
+`auth` adds the `sasl` capability automatically and **fails closed**: if the server won't negotiate SASL or the credentials are rejected, the session never registers anonymously. Self-signed internal CAs: `"server": { "tlsInsecure": true }`; SNI override behind proxies: `"tlsServerName": "…"`.
+
 ## What the agent sees
 
 One tool, eleven ops (discovery via `irc` with `op: "help"`):

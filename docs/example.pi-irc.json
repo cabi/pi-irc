@@ -3,7 +3,13 @@
 		"host": "irc.example.net",
 		"port": 6697,
 		"tls": true,
-		"passwordEnv": "PI_IRC_PASSWORD"
+		"passwordEnv": "PI_IRC_PASSWORD",
+		"tlsInsecure": false,
+		// "tlsServerName": "irc.internal.example.net"  // SNI override, e.g. behind a port-forward
+	},
+	"auth": {
+		"username": "pi-agent",
+		"passwordEnv": "PI_IRC_SASL_PASSWORD"
 	},
 	"nick": {
 		"template": "pi-{shortId}",
