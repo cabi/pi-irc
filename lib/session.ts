@@ -17,9 +17,7 @@ import type { PiIrcConfig } from "./config.ts";
 import { renderChannelName } from "./config.ts";
 import type { IdentityContext } from "./identity.ts";
 import { buildRegisterIdentity } from "./identity.ts";
-import type { IrcClient } from "./irc-client.ts";
-import { IrcClient } from "./irc-client.ts";
-import type { Transport } from "./irc-client.ts";
+import { IrcClient, type Transport } from "./irc-client.ts";
 import { IrcSocket } from "./irc-socket.ts";
 import { NUMERICS } from "./numerics.ts";
 import type { BufferedMessage, ReadOptions } from "./buffer.ts";
@@ -27,7 +25,6 @@ import { MessageBuffer } from "./buffer.ts";
 import type { Peer } from "./roster.ts";
 import { Roster } from "./roster.ts";
 import { Channels } from "./channels.ts";
-import type { DeliveryQueue } from "./delivery.ts";
 import { DeliveryQueue } from "./delivery.ts";
 import { wire } from "./wire.ts";
 

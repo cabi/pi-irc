@@ -1,12 +1,14 @@
-import { strict as assert } from "node:assert";
-import { EventEmitter } from "node:events";
+// IrcSession composition: bootstrap, privmsg routing/wake, roster lifecycle,
+// send defaults, status. Uses a scriptable fake transport (same shape as
+// tests/mock-irc-server.mjs but synchronous, with auto-answered JOIN bursts).
 import { test } from "node:test";
-import type { PiIrcConfig } from "../lib/config.ts";
-import { IrcSession } from "../lib/session.ts";
-import type { IdentityContext } from "../lib/identity.ts";
-import type { Transport } from "../lib/irc-client.ts";
-import { IrcClient } from "../lib/irc-client.ts";
-import { wire } from "../lib/wire.ts";
+import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import { loadViaPi, repoFile } from "./helpers.mjs";
+
+const { IrcSession } = await loadViaPi(repoFile("lib", "session.ts"));
+const { IrcClient } = await loadViaPi(repoFile("lib", "irc-client.ts"));
+const { wire } = await loadViaPi(repoFile("lib", "wire.ts"));
 
 /**
  * Fake IRC server: a scriptable Transport with a real IrcClient on top.
@@ -16,37 +18,37 @@ import { wire } from "../lib/wire.ts";
  * session's await handlers attach first — exactly the async gap a real
  * socket has.
  */
-class FakeServer extends EventEmitter implements Transport {
-	lines: string[] = [];
-	private client: IrcClient | null = null;
-	private answers: Array<() => void> = [];
+class FakeServer extends EventEmitter {
+	lines = [];
+	#client = null;
+	#answers = [];
 
 	constructor() {
 		super();
-		(this as unknown as { send: (l: string) => void }).send = (line: string) => {
+		this.send = (line) => {
 			this.lines.push(line);
-			this.answers.push(() => this.autoAnswer(line));
-			this.flush();
+			this.#answers.push(() => this.#autoAnswer(line));
+			this.#flush();
 		};
 	}
 
 	/** Server → client raw line (synchronous, like a socket data event). */
-	say(line: string): void {
+	say(line) {
 		this.emit("line", line);
 	}
 
-	private flush(): void {
-		const pending = this.answers;
-		this.answers = [];
+	#flush() {
+		const pending = this.#answers;
+		this.#answers = [];
 		for (const a of pending) queueMicrotask(a);
 	}
 
-	private autoAnswer(line: string): void {
-		if (!this.client) return;
+	#autoAnswer(line) {
+		if (!this.#client) return;
 		const m = /^(\S+)(?:\s+(.*))?$/.exec(line);
 		if (!m) return;
 		const [, cmd, rest = ""] = m;
-		const me = this.client.nick;
+		const me = this.#client.nick;
 		switch (cmd) {
 			case "JOIN": {
 				const chans = rest.split(",").map((c) => c.trim()).filter(Boolean);
@@ -71,18 +73,18 @@ class FakeServer extends EventEmitter implements Transport {
 		}
 	}
 
-	bind(client: IrcClient): void {
-		this.client = client;
+	bind(client) {
+		this.#client = client;
 	}
 
-	connect(): Promise<void> {
+	connect() {
 		return Promise.resolve();
 	}
-	close(): void {}
-	destroy(): void {}
+	close() {}
+	destroy() {}
 }
 
-function makeConfig(over: Partial<PiIrcConfig["channels"]> = {}): PiIrcConfig {
+function makeConfig(over = {}) {
 	return {
 		server: { host: "irc.example", port: 6667, tls: false },
 		nick: { template: "pi-{role}-{short}", maxLen: 30 },
@@ -92,12 +94,10 @@ function makeConfig(over: Partial<PiIrcConfig["channels"]> = {}): PiIrcConfig {
 	};
 }
 
-const ident: IdentityContext = {
-	role: "main",
+const ident = {
 	project: "proj",
-	session: "s1",
-	parent: undefined,
-	nickBase: "claude",
+	role: "main",
+	shortId: "s1",
 };
 
 /**
@@ -105,10 +105,10 @@ const ident: IdentityContext = {
  * connect() attaches its MOTD waiter before 376 arrives (the same ordering
  * guarantee a live socket gives).
  */
-async function boot(over: Partial<PiIrcConfig["channels"]> = {}, srv = new FakeServer()) {
+async function boot(over = {}, srv = new FakeServer()) {
 	const client = new IrcClient(
 		{ nick: "pi-main-s1", username: "pi", realname: "pi-agent:main:proj:s1" },
-		srv as unknown as Transport,
+		srv,
 	);
 	srv.bind(client);
 	client.startRegistration();
@@ -132,10 +132,10 @@ test("connect: joins project channel, stamps topic, seeds roster", async () => {
 	assert.ok(nicks.includes("pi-main-s1"));
 	assert.ok(nicks.includes("chanop"));
 	const self = session.rosterView().find((p) => p.nick === "pi-main-s1");
-	assert.equal(self?.kind, "agent");
-	assert.equal(self?.role, "main");
+	assert.equal(self.kind, "agent");
+	assert.equal(self.role, "main");
 	const human = session.rosterView().find((p) => p.nick === "chanop");
-	assert.equal(human?.kind, "human");
+	assert.equal(human.kind, "human");
 	assert.ok(session.channels.joined("#pi-proj"));
 	session.stop();
 });
@@ -145,7 +145,7 @@ test("connect: no topic stamp when a topic exists", async () => {
 	// After the auto-answer's 331, a real server with an existing topic
 	// would have sent 332 instead — replay that correction.
 	const origSay = srv.say.bind(srv);
-	srv.say = (line: string) => {
+	srv.say = (line) => {
 		origSay(line);
 		if (line.includes(" 331 ")) {
 			origSay(":srv 332 pi-main-s1 #pi-proj :pre-existing topic");
@@ -153,7 +153,7 @@ test("connect: no topic stamp when a topic exists", async () => {
 	};
 	const { session } = await boot({}, srv);
 	assert.ok(!srv.lines.some((l) => l.startsWith("TOPIC")), "no TOPIC when one exists");
-	assert.equal(session.channels.get("#pi-proj")?.topic, "pre-existing topic");
+	assert.equal(session.channels.get("#pi-proj").topic, "pre-existing topic");
 	session.stop();
 });
 
@@ -166,10 +166,10 @@ test("connect: extra default channels joined alongside project channel", async (
 
 test("connect: join failure rejects", async () => {
 	const srv = new FakeServer();
-	const client = new IrcClient({ nick: "pi-main-s1", username: "pi", realname: "pi-agent:main:proj:s1" }, srv as unknown as Transport);
+	const client = new IrcClient({ nick: "pi-main-s1", username: "pi", realname: "pi-agent:main:proj:s1" }, srv);
 	srv.bind(client);
 	// Sabotage the auto-answer: JOIN → 403 NoSuchChannel.
-	(srv as unknown as { send: (l: string) => void }).send = (line: string) => {
+	srv.send = (line) => {
 		srv.lines.push(line);
 		if (line.startsWith("JOIN")) {
 			const chan = line.slice(5);
@@ -198,8 +198,8 @@ test("privmsg routing: channel vs DM, wake only on DM", async () => {
 	assert.ok(msgs.some((m) => m.conv === "#pi-proj" && m.from === "alice" && m.text === "standup in 5"));
 	const dm = msgs.find((m) => m.kind === "dm");
 	assert.ok(dm, "DM buffered");
-	assert.equal(dm?.conv, "carol");
-	assert.equal(dm?.from, "carol");
+	assert.equal(dm.conv, "carol");
+	assert.equal(dm.from, "carol");
 	assert.equal(wakes, 1);
 	// Second DM inside the quiet window: no second wake.
 	srv.say(":carol!u@h PRIVMSG pi-main-s1 :another nudge");
@@ -212,9 +212,9 @@ test("privmsg routing: channel vs DM, wake only on DM", async () => {
 test("membership events update channels and roster", async () => {
 	const { srv, session } = await boot();
 	srv.say(":dave!u@h JOIN :#pi-proj"); // note: trailing form
-	assert.ok(session.channels.get("#pi-proj")?.members.has("dave"));
+	assert.ok(session.channels.get("#pi-proj").members.has("dave"));
 	srv.say(":dave!u@h PART #pi-proj :bye");
-	assert.ok(!session.channels.get("#pi-proj")?.members.has("dave"));
+	assert.ok(!session.channels.get("#pi-proj").members.has("dave"));
 	srv.say(":chanop!u@h NICK chanop2");
 	assert.ok(session.roster.all().some((p) => p.nick === "chanop2"));
 	srv.say(":chanop2!u@h QUIT :gone");
@@ -234,7 +234,7 @@ test("send: defaults to project channel, drains immediately within burst", async
 
 test("status summarizes session for the agent", async () => {
 	const { session } = await boot();
-	const st = session.status() as { nick: string; role: string; projectChannel: string; channels: string[]; unread: Record<string, number> };
+	const st = session.status();
 	assert.equal(st.nick, "pi-main-s1");
 	assert.equal(st.role, "main");
 	assert.equal(st.projectChannel, "#pi-proj");
