@@ -138,8 +138,10 @@ export default function (pi: ExtensionAPI) {
 			parameters: Type.Object({
 				op: StringEnum(IRC_OPS, {
 					description:
-						"connect: ensure the link (rarely needed). status: nick/channels/unread. roster: who is here. " +
-						"send: post text (default: project channel). read: fetch unread messages. join/part: extra channels. help: usage.",
+					"connect: ensure the link (rarely needed). status: nick/channels/unread. roster: who is here. " +
+					"send: post text (default: project channel). read: fetch unread messages. " +
+					"ask: peer+text correlated question (blocks for reply). reply: id+text answers an ask. " +
+					"pending: open asks both ways. join/part: extra channels. help: usage.",
 				}),
 				target: Type.Optional(
 					Type.String({ description: "send: channel or nick; default = project channel" }),
@@ -156,6 +158,11 @@ export default function (pi: ExtensionAPI) {
 				channels: Type.Optional(
 					Type.Array(Type.String(), { description: "join/part: channel names" }),
 				),
+				peer: Type.Optional(Type.String({ description: "ask: peer nick to ask (question in `text`)" })),
+				timeout: Type.Optional(
+					Type.Number({ description: "ask: seconds to wait for the reply (default 600, max 3600)" }),
+				),
+				id: Type.Optional(Type.String({ description: "reply: the ask id to answer (answer in `text`)" })),
 			}),
 			async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 				const r = await executeIrcOp(

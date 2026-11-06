@@ -10,7 +10,19 @@
  */
 import type { IrcSession } from "./session.ts";
 
-export const IRC_OPS = ["connect", "status", "roster", "send", "read", "join", "part", "help"] as const;
+export const IRC_OPS = [
+	"connect",
+	"status",
+	"roster",
+	"send",
+	"read",
+	"ask",
+	"reply",
+	"pending",
+	"join",
+	"part",
+	"help",
+] as const;
 export type IrcOp = (typeof IRC_OPS)[number];
 
 export interface IrcToolParams {
@@ -30,6 +42,12 @@ export interface IrcToolParams {
 	limit?: number;
 	/** join/part: channel names. */
 	channels?: string[];
+	/** ask: peer nick to ask (question goes in `text`). */
+	peer?: string;
+	/** ask: timeout in seconds (default 600, max 3600). */
+	timeout?: number;
+	/** reply: the ask id to answer (answer goes in `text`). */
+	id?: string;
 }
 
 export interface IrcToolResult {
@@ -111,6 +129,49 @@ export async function executeIrcOp(
 			const lines = msgs.map((m) => `${fmtTime(m.ts)} ${m.channel.startsWith("#") || m.channel.startsWith("&") ? "" : "(dm) "}${m.channel} <${m.from}> ${m.text}`);
 			return text(lines.join("\n"), { count: msgs.length });
 		}
+		case "ask": {
+			if (!params.peer || !params.text?.trim()) {
+				throw new Error("ask requires peer and text (the question)");
+			}
+			const res = await session.ask(params.peer, params.text, params.timeout);
+			if (res.status === "replied") {
+				return text(`${params.peer} replied: ${res.reply}`, res as unknown as Record<string, unknown>);
+			}
+			return text(
+				`no answer from ${params.peer} within ${Math.round(res.timeoutMs / 1000)}s — the ask is still visible to them; retry or send directly`,
+				res as unknown as Record<string, unknown>,
+			);
+		}
+
+		case "reply": {
+			if (!params.id || !params.text?.trim()) {
+				const open = session.rpc.pendingInbound();
+				const listed = open.length
+					? `open asks:\n${open.map((a) => `  id=${a.id} from ${a.peer}: ${a.question}`).join("\n")}`
+					: "no open asks";
+				throw new Error(`reply requires id and text. ${listed}`);
+			}
+			const r = session.reply(params.id, params.text);
+			return text(`replied to ${r.to} (ask id=${r.id})`, r as unknown as Record<string, unknown>);
+		}
+
+		case "pending": {
+			const inb = session.rpc.pendingInbound();
+			const out = session.rpc.pendingOutbound();
+			const lines: string[] = [];
+			lines.push(
+				inb.length
+					? `asks to answer (${inb.length}):\n${inb.map((a) => `  id=${a.id} from ${a.peer}: ${a.question}`).join("\n")}`
+					: "no asks waiting for you",
+			);
+			lines.push(
+				out.length
+					? `asks you sent (${out.length}):\n${out.map((a) => `  id=${a.id} to ${a.peer}: ${a.question}`).join("\n")}`
+					: "no asks you are waiting on",
+			);
+			return text(lines.join("\n"), { inbound: inb.length, outbound: out.length });
+		}
+
 
 		case "join": {
 			const names = (params.channels ?? []).map((c) => c.trim()).filter(Boolean);
@@ -144,6 +205,9 @@ export async function executeIrcOp(
 					"  roster — who is on the project channel (agents and humans)",
 					"  send — text [+ optional target channel/nick]; default: project channel",
 					"  read — unread messages [conversation=..., from=..., since=..., limit=N]",
+				"  ask — peer + text: correlated question; blocks until their reply or timeout",
+				"  reply — id + text: answer an ask (ids shown in read/pending output)",
+				"  pending — asks waiting on you and asks you are waiting on",
 					"  join / part — channels: string[] (project channel cannot be parted)",
 					"",
 					"humans and other agents see your messages as normal IRC traffic;",

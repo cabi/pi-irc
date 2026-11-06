@@ -145,4 +145,61 @@ test("part of only the project channel fails", async () => {
 test("connect reports nick, project channel, and channel count", async () => {
 	const r = await executeIrcOp(ensureOf(fakeSession()), "connect", {});
 	assert.match(r.content[0].text, /connected as pi-main-abcd1234 in #pi-proj \(1 channels\)/);
+
+test("ask requires peer and text", async () => {
+	await assert.rejects(
+		() => executeIrcOp(ensureOf(fakeSession()), "ask", { text: "hi?" }),
+		/ask requires peer and text/,
+	);
+});
+
+test("ask renders a replied resolution", async () => {
+	const s = fakeSession({
+		ask: async (_peer, question) => ({ status: "replied", id: "x1", peer: "pi-sub-b2", reply: `re: ${question}`, elapsedMs: 5 }),
+	});
+	const r = await executeIrcOp(ensureOf(s), "ask", { peer: "pi-sub-b2", text: "which branch?" });
+	assert.match(r.content[0].text, /pi-sub-b2 replied: re: which branch\?/);
+});
+
+test("ask renders a timeout with guidance", async () => {
+	const s = fakeSession({
+		ask: async () => ({ status: "timeout", id: "x2", peer: "carol", question: "there?", timeoutMs: 5_000 }),
+	});
+	const r = await executeIrcOp(ensureOf(s), "ask", { peer: "carol", text: "there?", timeout: 5 });
+	assert.match(r.content[0].text, /no answer from carol within 5s/);
+	assert.match(r.content[0].text, /still visible/);
+});
+
+test("reply without id lists open asks", async () => {
+	const s = fakeSession({
+		rpc: {
+			pendingInbound: () => [{ id: "a1", peer: "carol", question: "deploy?", receivedAt: 1 }],
+			pendingOutbound: () => [],
+		},
+	});
+	await assert.rejects(
+		() => executeIrcOp(ensureOf(s), "reply", { text: "yes" }),
+		/reply requires id and text[\s\S]*id=a1 from carol: deploy\?/,
+	);
+});
+
+test("reply forwards id and text to the session", async () => {
+	const s = fakeSession({
+		reply: (id, text) => ({ id, to: "carol", parts: 1, text }),
+	});
+	const r = await executeIrcOp(ensureOf(s), "reply", { id: "a1", text: "ship it" });
+	assert.match(r.content[0].text, /replied to carol \(ask id=a1\)/);
+});
+
+test("pending lists both directions", async () => {
+	const s = fakeSession({
+		rpc: {
+			pendingInbound: () => [{ id: "a1", peer: "carol", question: "deploy?", receivedAt: 1 }],
+			pendingOutbound: () => [{ id: "x9", peer: "pi-sub-b2", question: "branch?", sentAt: 1, timeoutMs: 1000, state: "waiting" }],
+		},
+	});
+	const r = await executeIrcOp(ensureOf(s), "pending", {});
+	assert.match(r.content[0].text, /asks to answer \(1\):[\s\S]*id=a1 from carol: deploy\?/);
+	assert.match(r.content[0].text, /asks you sent \(1\):[\s\S]*id=x9 to pi-sub-b2: branch\?/);
+});
 });
