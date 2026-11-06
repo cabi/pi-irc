@@ -56,7 +56,7 @@ function rawClient(nick) {
 			buf = buf.slice(i + 2);
 			if (!line) continue;
 			lines.push(line);
-			for (const w of waiters.splice(0)) w(line);
+			for (const w of [...waiters]) w(line);
 		}
 	});
 	const send = (l) => sock.write(`${l}\r\n`);
@@ -65,12 +65,14 @@ function rawClient(nick) {
 			const hit = lines.find(pred);
 			if (hit) return res(hit);
 			const t = setTimeout(() => rej(new Error(`timeout waiting for line; got:\n${lines.slice(-12).join("\n")}`)), ms);
-			waiters.push((l) => {
+			const waiter = (l) => {
 				if (pred(l)) {
 					clearTimeout(t);
+					waiters.splice(waiters.indexOf(waiter), 1);
 					res(l);
 				}
-			});
+			};
+			waiters.push(waiter);
 		});
 	return {
 		nick,

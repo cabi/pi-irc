@@ -9,6 +9,10 @@ server:
   name: ergo.pi.test
   listeners:
     ":6667": {}
+    ":6697":
+      tls:
+        cert: /ergo/certs/tls.crt
+        key: /ergo/certs/tls.key
   casemapping: ascii
   enforce-utf8: true
   lookup-hostnames: false
@@ -25,10 +29,13 @@ datastore:
   autoupgrade: true
 
 accounts:
-  authentication-enabled: false
+  authentication-enabled: true
   require-sasl:
     enabled: false
   registration:
+    enabled: true
+    verify-email: false
+  login-throttling:
     enabled: false
 
 channels:

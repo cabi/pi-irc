@@ -5,8 +5,9 @@
  *
  *   docker run -d --rm --name pi-irc-ergo \
  *     -v "$PWD/tests/ergo/ergo.yaml:/ergo/ergo.yaml:ro" \
+     -v "$PWD/tests/ergo/certs:/ergo/certs:ro" \
  *     -v pi-irc-ergo-data:/ergo/data \
- *     -p 127.0.0.1:16667:6667 ergochat/ergo:latest
+ *     -p 127.0.0.1:16667:6667 -p 127.0.0.1:16697:6697 ergochat/ergo:latest
  *   node scripts/ergo-smoke.mjs
  *   docker rm -f pi-irc-ergo   # and: docker volume rm pi-irc-ergo-data
  *
