@@ -27,14 +27,46 @@ export class IrcSocket extends EventEmitter {
 	connect(opts: ConnectOptions): Promise<void> {
 		return new Promise((resolve, reject) => {
 			const timeoutMs = opts.timeoutMs ?? 15000;
-			const onConnect = () => {
-				this.socket!.setTimeout(0);
-				resolve();
-			};
+			let settled = false;
+			const timer = setTimeout(() => {
+				if (settled) return;
+				settled = true;
+				this.socket?.destroy();
+				this.socket = null;
+				reject(new Error(`connect timeout after ${timeoutMs}ms`));
+			}, timeoutMs);
 			const onError = (err: Error) => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
 				this.socket?.destroy();
 				this.socket = null;
 				reject(err);
+			};
+			const onConnect = () => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
+				const sock = this.socket!;
+				sock.setTimeout(0);
+				sock.setEncoding("utf8");
+				// Post-connect wiring ONLY: during the connect phase the
+				// promise above is the sole error channel. Re-emitting
+				// 'error' before the consumer binds its listener is an
+				// unhandled 'error' emit, which takes the host process down
+				// (field crash v0.3.0: server switched under a running pi).
+				sock.on("data", (chunk: string) => this.#onData(chunk));
+				sock.on("error", (err: Error) => {
+					// Post-connect errors: surface, then let close fire.
+					this.emit("error", err);
+				});
+				sock.on("close", () => {
+					const hadSocket = this.socket !== null;
+					this.socket = null;
+					if (hadSocket && !this.closing) this.emit("unexpected-close");
+					this.emit("close");
+				});
+				resolve();
 			};
 
 			const common = {
@@ -50,23 +82,11 @@ export class IrcSocket extends EventEmitter {
 			} else {
 				this.socket = net.connect(common);
 			}
-			this.socket.once("connect", onConnect);
-			this.socket.once("secureConnect", onConnect);
+			// TCP completes on 'connect', TLS only after the handshake
+			// ('secureConnect') — resolving TLS on raw 'connect' would wire
+			// data handlers before decrypted bytes exist.
+			this.socket.once(opts.tls ? "secureConnect" : "connect", onConnect);
 			this.socket.once("error", onError);
-			this.socket.setTimeout(timeoutMs, () => onError(new Error(`connect timeout after ${timeoutMs}ms`)));
-
-			this.socket.setEncoding("utf8");
-			this.socket.on("data", (chunk: string) => this.#onData(chunk));
-			this.socket.on("error", (err: Error) => {
-				// Post-connect errors: surface, then let close fire.
-				this.emit("error", err);
-			});
-			this.socket.on("close", () => {
-				const hadSocket = this.socket !== null;
-				this.socket = null;
-				if (hadSocket && !this.closing) this.emit("unexpected-close");
-				this.emit("close");
-			});
 		});
 	}
 

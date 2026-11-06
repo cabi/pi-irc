@@ -103,7 +103,7 @@ export class IrcClient extends EventEmitter {
 				this.state = "closed";
 				this.emit("socketClosed");
 			},
-			error: (err: Error) => this.emit("error", { message: `socket: ${err.message}` }),
+			error: (err: Error) => this.emit("error", new Error(`socket: ${err.message}`)),
 		};
 		transport.on("line", handlers.line);
 		transport.on("close", handlers.close);
