@@ -14,7 +14,7 @@
  * - malformed envelopes are plain text — never an error on the wire
  */
 
-import { chunkText } from "./delivery.ts";
+
 
 export interface AskEnvelope {
 	kind: "ask" | "reply";
@@ -33,7 +33,9 @@ const ENVELOPE_RE =
 export function parseEnvelope(text: string): AskEnvelope | null {
 	const m = ENVELOPE_RE.exec(text);
 	if (!m) return null;
-	const env: AskEnvelope = { kind: m[1] as "ask" | "reply", id: m[2], body: text.slice(m[0].length) };
+	const body = text.slice(m[0].length);
+	if (!body.trim()) return null; // empty body: not a real envelope, just text
+	const env: AskEnvelope = { kind: m[1] as "ask" | "reply", id: m[2], body };
 	if (m[3] !== undefined) env.timeoutSec = Number(m[3]);
 	if (m[4] !== undefined && m[5] !== undefined) {
 		const i = Number(m[4]);
@@ -53,6 +55,27 @@ export function formatAsk(id: string, timeoutSec: number, body: string): string 
 export function formatReply(id: string, body: string, part?: { i: number; n: number }): string {
 	const marker = part ? ` part=${part.i}/${part.n}` : "";
 	return `[pi-reply ${id}${marker}] ${body}`;
+}
+
+/**
+ * Split text into ≤maxLen pieces WITHOUT losing the separator: a split at a
+ * space keeps that space at the end of the chunk, so joining chunks with ""
+ * reconstructs the input exactly. (delivery.chunkText drops the space — fine
+ * for human-readable plain sends, wrong for protocol payloads.)
+ */
+function splitLossless(text: string, maxLen: number): string[] {
+	if (text.length <= maxLen) return [text];
+	const chunks: string[] = [];
+	let rest = text;
+	while (rest.length > maxLen) {
+		let cut = rest.lastIndexOf(" ", maxLen);
+		if (cut < Math.ceil(maxLen / 2)) cut = maxLen; // no good space: hard split
+		const keep = cut === maxLen ? cut : cut + 1; // space split keeps the space
+		chunks.push(rest.slice(0, keep));
+		rest = rest.slice(keep);
+	}
+	if (rest.length > 0) chunks.push(rest);
+	return chunks;
 }
 
 /** Worst-case envelope prefix length for a given id (all optional fields set). */
@@ -78,7 +101,7 @@ export function envelopeParts(
 	const budget =
 		prefixBudget(id, kind, digits) + (kind === "ask" ? " timeout=99999".length : 0) + 8;
 	const room = Math.max(24, maxChunk - budget);
-	const raw = chunkText(body, room);
+	const raw = splitLossless(body, room);
 	if (raw.length === 1) {
 		return [kind === "ask" ? formatAsk(id, timeoutSec ?? 600, body) : formatReply(id, body)];
 	}
