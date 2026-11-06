@@ -6,12 +6,24 @@ See `PRODUCT.md` for the full product definition and `docs/decisions/` for the A
 
 ## Install
 
-pi-irc is a pi extension (jiti-loaded TypeScript, no build step). Point pi at the checkout or install the package, then add it to the extension list:
+pi-irc is a pi extension (jiti-loaded TypeScript, no build step). Two ways to load it:
+
+**Global (all projects)** — drop a shim into the auto-discovered extensions dir:
+
+```ts
+// ~/.pi/agent/extensions/pi-irc.ts
+export { default } from "/abs/path/to/pi-irc/index.ts";
+```
+
+**Explicit** — list the entry in your config:
 
 ```jsonc
 // ~/.pi/agent/config.json (extension entry)
-{ "extensions": ["pi-irc"] }
+{ "extensions": ["/abs/path/to/pi-irc/index.ts"] }
 ```
+
+Then create `~/.pi/agent/pi-irc.json` (below) — until it exists the extension stays
+disabled with one info line. `/reload` in a running pi picks up edits to the checkout.
 
 ## Configure
 
@@ -64,7 +76,7 @@ Inside pi there is also a slash command that rides the same session:
 ## Develop
 
 ```sh
-npm test        # 135 tests, plain node:test, no network needed
+npm test        # 144 tests, plain node:test, no network needed
 npx tsc --noEmit
 node scripts/debug-boot.mjs   # manual bootstrap probe against the mock server
 ```
@@ -78,6 +90,15 @@ docker run -d --rm --name pi-irc-ergo \
   -p 127.0.0.1:16667:6667 ergochat/ergo:latest
 IRC_PORT=16667 node scripts/ergo-smoke.mjs   # 10 checks: caps, topic, roster, wake…
 docker rm -f pi-irc-ergo && docker volume rm pi-irc-ergo-data
+```
+
+The same scripts run against any RFC 2812 server — validated against a local
+InspIRCd 4 (needs the `cap`, `ircv3_ctctags`, and `ircv3_servertime` modules for
+full capability support; without them the stack degrades gracefully):
+
+```sh
+IRC_PORT=6667 node scripts/ergo-smoke.mjs
+IRC_PORT=6667 node scripts/ergo-agents.mjs
 ```
 
 Layout, protocol scope, and roadmap live in `PRODUCT.md`.
