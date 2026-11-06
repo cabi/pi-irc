@@ -126,7 +126,11 @@ export async function executeIrcOp(
 				limit: params.limit,
 			});
 			if (msgs.length === 0) return text("nothing unread", { count: 0 });
-			const lines = msgs.map((m) => `${fmtTime(m.ts)} ${m.channel.startsWith("#") || m.channel.startsWith("&") ? "" : "(dm) "}${m.channel} <${m.from}> ${m.text}`);
+			const lines = msgs.map((m) => {
+				const chan = m.channel.startsWith("#") || m.channel.startsWith("&");
+				const tag = chan ? "" : m.kind === "ask" ? " (ask) " : m.kind === "reply" ? " (reply) " : " (dm) ";
+				return `${fmtTime(m.ts)}${tag}${m.channel} <${m.from}> ${m.text}`;
+			});
 			return text(lines.join("\n"), { count: msgs.length });
 		}
 		case "ask": {
