@@ -13,6 +13,8 @@ export interface ConnectOptions {
 	tls: boolean;
 	/** TLS only: reject unauthorized certificates (default true). */
 	rejectUnauthorized?: boolean;
+	/** TLS only: SNI server name override (defaults to `host`). */
+	serverName?: string;
 	/** Connection timeout in ms (default 15000). */
 	timeoutMs?: number;
 }
@@ -43,6 +45,7 @@ export class IrcSocket extends EventEmitter {
 				this.socket = tls.connect({
 					...common,
 					rejectUnauthorized: opts.rejectUnauthorized ?? true,
+					...(opts.serverName ? { servername: opts.serverName } : {}),
 				});
 			} else {
 				this.socket = net.connect(common);

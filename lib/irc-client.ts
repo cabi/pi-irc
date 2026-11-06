@@ -12,6 +12,7 @@ import { EventEmitter } from "node:events";
 import { parseLine, wire, type IrcMessage } from "./wire.ts";
 import { NUMERICS } from "./numerics.ts";
 import { CapNegotiator } from "./caps.ts";
+import { authChunks, saslPlainPayload } from "./sasl.ts";
 
 export type ClientState = "idle" | "connecting" | "registering" | "registered" | "closed";
 
@@ -33,6 +34,8 @@ export interface RegisterSpec {
 	pingTimeoutMs?: number;
 	/** IRCv3 caps to negotiate before registration ([] or omit = skip CAP). */
 	caps?: string[];
+	/** SASL PLAIN credentials — adds "sasl" to caps and fails closed when the server won't negotiate it. */
+	sasl?: { username: string; password: string };
 }
 
 export interface ClientEvents {
@@ -80,13 +83,15 @@ export class IrcClient extends EventEmitter {
 	private currentNickBase: string;
 	private watchdog: ReturnType<typeof setInterval> | null = null;
 	#caps = new CapNegotiator();
+	/** SASL chunks staged after "AUTHENTICATE PLAIN" (null = no exchange in flight). */
+	#saslChunks: string[] | null = null;
 
 	constructor(spec: RegisterSpec, transport: Transport) {
 		super();
 		this.spec = spec;
 		this.nick = spec.nick;
 		this.currentNickBase = spec.nick;
-		this.#caps = new CapNegotiator(spec.caps ?? []);
+		this.#caps = new CapNegotiator(this.#wantedCaps());
 		this.#bindTransport(transport);
 	}
 
@@ -125,7 +130,8 @@ export class IrcClient extends EventEmitter {
 		this.currentNickBase = this.spec.nick;
 		this.fallbackIdx = 0;
 		this.registeredAt = null;
-		this.#caps = new CapNegotiator(this.spec.caps ?? []);
+		this.#caps = new CapNegotiator(this.#wantedCaps());
+		this.#saslChunks = null;
 	}
 
 	get enabledCaps(): string[] {
@@ -207,8 +213,22 @@ export class IrcClient extends EventEmitter {
 		if (msg.command === "PONG") return;
 		if (msg.command === "CAP") {
 			const action = this.#caps.handleCap(msg.params);
-			for (const line of action.send ?? []) this.#transport.send(line);
-			if (action.done) this.emit("capsEnabled", { caps: this.#caps.enabled });
+			// With SASL configured the finish line is held back here —
+			// 903/907 send CAP END once authentication has actually run.
+			const lines = action.done && this.spec.sasl ? (action.send ?? []).filter((l) => l !== "CAP END") : (action.send ?? []);
+			for (const line of lines) this.#transport.send(line);
+			if (action.done) this.#capsDone();
+			return;
+		}
+		if (msg.command === "AUTHENTICATE") {
+			// Server side of the exchange: "+" invites the payload, "*" aborts.
+			const param = msg.params[0];
+			if (param === "+" && this.#saslChunks) {
+				for (const chunk of this.#saslChunks) this.#transport.send(`AUTHENTICATE ${chunk}`);
+			} else if (param === "*") {
+				this.emit("error", { message: "server aborted SASL exchange" });
+				this.#transport.destroy();
+			}
 			return;
 		}
 		if (msg.command === "AWAY") {
@@ -304,7 +324,7 @@ export class IrcClient extends EventEmitter {
 				// negotiation silently and let registration finish.
 				if (this.#caps.phase !== "done") {
 					this.#caps.abort();
-					this.emit("capsEnabled", { caps: [] });
+				this.#capsDone();
 				}
 				break;
 			case NUMERICS.ERR_NICKNAMEINUSE:
@@ -319,6 +339,20 @@ export class IrcClient extends EventEmitter {
 				this.#transport.send(wire.nick(this.nick));
 				break;
 			}
+			case NUMERICS.RPL_SASLSUCCESS:
+			case NUMERICS.ERR_SASLALREADY:
+				// 903 = success; 907 = already authenticated from a prior
+				// attempt — both release CAP END and let registration finish.
+				this.#saslChunks = null;
+				this.#transport.send("CAP END");
+				this.emit("capsEnabled", { caps: this.#caps.enabled });
+				break;
+			case NUMERICS.ERR_SASLFAIL:
+			case NUMERICS.ERR_SASLTOOLONG:
+			case NUMERICS.ERR_SASLABORTED:
+				this.emit("error", { code, message: `SASL failed: ${msg.params.slice(1).join(" ") || String(code)}` });
+				this.#transport.destroy();
+				break;
 			case NUMERICS.ERR_NOSUCHCHANNEL:
 			case NUMERICS.ERR_PASSWDMISMATCH:
 			case NUMERICS.ERR_BANNEDFROMCHAN:
@@ -337,6 +371,32 @@ export class IrcClient extends EventEmitter {
 				// via "message"; unknown ones are simply not special here.
 				break;
 		}
+	}
+
+	/** Caps wanted for this registration: config request plus sasl when auth is on. */
+	#wantedCaps(): string[] {
+		const wanted = this.spec.caps ?? [];
+		return this.spec.sasl ? [...new Set([...wanted, "sasl"])] : wanted;
+	}
+
+	/**
+	 * CAP negotiation ended. With auth configured, hold CAP END and run the
+	 * SASL exchange (903/907 release it); fail closed — never register
+	 * anonymously — when the server won't negotiate sasl at all.
+	 */
+	#capsDone(): void {
+		if (this.spec.sasl) {
+			const negotiated = this.#caps.enabled.some((c) => c.toLowerCase() === "sasl");
+			if (!negotiated) {
+				this.emit("error", { message: "auth configured but the server will not negotiate sasl (not offered or refused)" });
+				this.#transport.destroy();
+				return;
+			}
+			this.#saslChunks = authChunks(saslPlainPayload(this.spec.sasl.username, this.spec.sasl.password));
+			this.#transport.send("AUTHENTICATE PLAIN");
+			return;
+		}
+		this.emit("capsEnabled", { caps: this.#caps.enabled });
 	}
 
 	#startWatchdog(): void {

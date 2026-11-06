@@ -18,6 +18,18 @@ export interface ServerConfig {
 	tls: boolean;
 	/** Env var name the server password is resolved from at connect time. */
 	passwordEnv?: string;
+	/** TLS only: accept self-signed / internal-CA certificates (default false). */
+	tlsInsecure?: boolean;
+	/** TLS only: SNI server name override (behind proxies / port-forwards). */
+	tlsServerName?: string;
+}
+
+export interface AuthConfig {
+	username: string;
+	/** Inline password — local test servers only; prefer passwordEnv. */
+	password?: string;
+	/** Env var name the SASL password is resolved from at connect time. */
+	passwordEnv?: string;
 }
 
 export interface NickConfig {
@@ -54,6 +66,8 @@ export interface DeliveryConfig {
 
 export interface PiIrcConfig {
 	server: ServerConfig;
+	/** SASL PLAIN identity — omit for anonymous local servers. */
+	auth?: AuthConfig;
 	nick: NickConfig;
 	channels: ChannelsConfig;
 	capabilities: CapabilitiesConfig;
@@ -281,14 +295,36 @@ export function loadConfig(opts: {
 
 	const passwordEnv =
 		server.passwordEnv !== undefined ? str(server, "server.passwordEnv", server.passwordEnv) : undefined;
+	const tlsInsecure =
+		server.tlsInsecure !== undefined ? bool(server, "server.tlsInsecure", server.tlsInsecure) : undefined;
+	const tlsServerName =
+		server.tlsServerName !== undefined ? str(server, "server.tlsServerName", server.tlsServerName) : undefined;
 
+	let auth: AuthConfig | undefined;
+	const authRaw = merged.auth as Json | undefined;
+	if (authRaw !== undefined) {
+		const password =
+			authRaw.password !== undefined ? str(authRaw, "auth.password", authRaw.password) : undefined;
+		const authPasswordEnv =
+			authRaw.passwordEnv !== undefined ? str(authRaw, "auth.passwordEnv", authRaw.passwordEnv) : undefined;
+		if ((password !== undefined) === (authPasswordEnv !== undefined)) {
+			throw new ConfigError("auth", "set exactly one of auth.password or auth.passwordEnv");
+		}
+		auth = {
+			username: str(authRaw, "auth.username", authRaw.username),
+			...(password !== undefined ? { password } : { passwordEnv: authPasswordEnv }),
+		};
+	}
 	const config: PiIrcConfig = {
 		server: {
 			host,
 			port: int(server, "server.port", server.port ?? DEFAULTS.server.port, 1, 65535),
 			tls: bool(server, "server.tls", server.tls ?? DEFAULTS.server.tls),
 			passwordEnv,
+			...(tlsInsecure !== undefined ? { tlsInsecure } : {}),
+			...(tlsServerName !== undefined ? { tlsServerName } : {}),
 		},
+		...(auth ? { auth } : {}),
 		nick: {
 			template: str(nick, "nick.template", nick.template ?? DEFAULTS.nick.template),
 			maxLen: int(nick, "nick.maxLen", nick.maxLen ?? DEFAULTS.nick.maxLen, 1, 50),

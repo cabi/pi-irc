@@ -135,6 +135,12 @@ export class IrcSession extends EventEmitter {
 	): Promise<IrcSession> {
 		const now = deps.now ?? Date.now;
 		const password = config.server.passwordEnv ? process.env[config.server.passwordEnv] : undefined;
+		let sasl: { username: string; password: string } | undefined;
+		if (config.auth) {
+			const saslPassword = config.auth.password ?? process.env[config.auth.passwordEnv ?? ""];
+			if (!saslPassword) throw new Error(`SASL password missing (env ${config.auth.passwordEnv ?? "?"} unset)`);
+			sasl = { username: config.auth.username, password: saslPassword };
+		}
 		let client = deps.client;
 		if (client) {
 			// Injected client: registration is the fixture's business.
@@ -152,6 +158,7 @@ export class IrcSession extends EventEmitter {
 					nickFallbacks: reg.nickFallbacks,
 					pingTimeoutMs: 60_000,
 					caps: config.capabilities.request,
+					...(sasl ? { sasl } : {}),
 				},
 				transport,
 			);
@@ -159,7 +166,9 @@ export class IrcSession extends EventEmitter {
 				host: config.server.host,
 				port: config.server.port,
 				tls: config.server.tls,
-				timeoutMs: BOOT_TIMEOUT_MS,
+				...(config.server.tlsInsecure ? { rejectUnauthorized: false } : {}),
+			...(config.server.tlsServerName ? { serverName: config.server.tlsServerName } : {}),
+			timeoutMs: BOOT_TIMEOUT_MS,
 			});
 			// Waiters attach before registration starts: 001..376 can arrive
 			// in a single chunk, and a listener attached after `await` would
@@ -367,6 +376,8 @@ export class IrcSession extends EventEmitter {
 			host: this.config.server.host,
 			port: this.config.server.port,
 			tls: this.config.server.tls,
+			...(this.config.server.tlsInsecure ? { rejectUnauthorized: false } : {}),
+			...(this.config.server.tlsServerName ? { serverName: this.config.server.tlsServerName } : {}),
 			timeoutMs: BOOT_TIMEOUT_MS,
 		});
 		this.client.attach(transport);
