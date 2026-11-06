@@ -58,6 +58,14 @@ try {
 	const who = main.s.rosterView().map((p) => p.nick);
 	check("both agents see each other in the roster", who.includes(NICKS.sub), who.join(","));
 
+	// 1a. P11 addressing: @session-id and role selectors resolve via roster
+	const atSub = main.s.resolveTarget(`@b${stamp}`);
+	check("main resolves @session-id to the sub nick", atSub === NICKS.sub, `${atSub} (sub=${NICKS.sub})`);
+	check("main resolves the 'sub' role selector", main.s.resolveTarget("sub") === NICKS.sub);
+	check("sub resolves the 'main' role selector", sub.s.resolveTarget("main") === NICKS.main);
+	const noMain = (() => { try { main.s.resolveTarget("main"); return "resolved"; } catch (e) { return e.message; } })();
+	check("main cannot address itself via role (self-excluded)", /no main agent/.test(noMain), noMain.slice(0, 60));
+
 	// 1. main asks sub a long question (forces multi-part envelope)
 	const words = Array.from({ length: 90 }, (_, i) => `q${i}`).join(" ");
 	const answer = main.s.ask(NICKS.sub, words, 15);
