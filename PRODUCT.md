@@ -45,6 +45,10 @@ pi-irc owns its configuration file(s), layered and merged (project over global):
     "tls": true,                    // default on; false only for local test servers
     "passwordEnv": "PI_IRC_PASSWORD" // server password resolved from env, never stored
   },
+  "auth": {                         // SASL PLAIN — omit for anonymous local servers
+    "username": "pi-agent",
+    "passwordEnv": "PI_IRC_SASL_PASSWORD" // resolved from env at connect; inline password allowed for tests
+  },
   "nick": {
     "template": "pi-{shortId}",     // {shortId} = session short id; config-driven alternatives allowed
     "maxLen": 30                    // lowered automatically for RFC 1459-era 9-char servers
@@ -173,6 +177,7 @@ pi-irc/
 - **P4 (done)** hardening + packaging: KICK detection with buffered system line and delayed rejoin (`channels.kickRejoinDelayMs`, default 3 s, 0 stays out; `stop()` cancels); MIT license, npm metadata, `files` allowlist, `npm pack` verified at 33 kB / 20 files; 140 unit+integration tests, typecheck clean, both live ergo runs green (smoke 10 checks, coordination 10 checks). Accidental cross-server validation: against a local InspIRCd (port collision) the stack registered, joined, and delivered with caps silently empty — RFC 2812 degradation works outside ergo. No npm publish yet — the design gets falsified in real projects first.
 - **P5 (done)** real-project falsification against InspIRCd 4 (`irc.local`, stock modules plus `cap` + `ircv3_ctctags` + `ircv3_servertime`): both live runs green on the foreign daemon (smoke 10/10, coordination 10/10). Found and fixed in the field: (a) multi-cap `CAP REQ` is all-or-nothing — one unsupported cap bounced the whole set, so a NAK now falls back to per-cap REQs (8d24058); (b) config files are hand-edited — JSONC (comments, trailing commas) is now tolerated with a string-aware stripper (eb8633a); (c) a probe artifact taught the deeper lesson that session-dir attribution follows the startup dir — identity stays on `ctx.cwd` (06251fa). Live headless pi session in a scratch project (`pi --print`, global shim): correct nick/project/channel, roster with both humans, DM wake observed by the model mid-turn. 144 tests green.
 - **P6 (done)** coordination parity with local buses (pi-intercom) over IRC DMs. Ask/reply RPC envelopes (`[pi-ask <id> timeout=600]` / `[pi-reply <id>]`, DM-only, lossless multi-part reassembly, late replies degrade to plain DMs) with `irc ask` / `irc reply` / `irc pending` ops — ask blocks up to the timeout, answers surface as system lines. Busy presence: `agent_start` → `AWAY :busy since hh:mm`, `agent_settled` → back; 305/306 confirmations land in the buffer; peers with away-notify see the roster busy flag live. Wake trust: `delivery.wakeAllowNicks` globs gate the DM wake (roster-verified agents always pass; blocked DMs buffer with one system note). Spec kept below. 175 tests green.
+- **P7 (in progress)** SASL PLAIN identity + TLS in anger: authenticated identities for real networks (Libera-class servers require SASL inside TLS). `auth {username, passwordEnv}` auto-adds `sasl` to the capability request; the client interposes the AUTHENTICATE exchange between the `sasl` ACK and CAP END and fails closed (never continues anonymous) when a configured server won't negotiate. TLS gains `tlsInsecure`/`tlsServerName` for internal CAs and SNI overrides. Live falsification flips the ergo fixture to real accounts + a self-signed TLS listener.
 
 ### P6 — Ask/Reply RPC, busy presence, wake trust
 
@@ -197,6 +202,22 @@ pi-irc/
 
 **Non-goals kept**: no attachments payload (paste content in the message), no `handover` (session summarization is a host feature, not a bus feature), no supersedes/cancel (DMs are immutable once sent).
 
+
+### P7 — SASL PLAIN identity, TLS in anger
+
+**Problem.** Real IRC networks require an authenticated identity: SASL over TLS. pi-irc has so far only proven itself against anonymous local daemons, and a config that promises authentication would today silently fail open.
+
+**Mechanics** (lib/sasl.ts, pure helpers + client orchestration in lib/irc-client.ts):
+
+- `auth: {username, passwordEnv|password}` in config → `sasl` is added to the CAP request automatically; `passwordEnv` resolves at connect time (secrets never stored in the config file; inline `password` allowed for local test servers)
+- When capability negotiation would finish and `sasl` is enabled, the client **holds CAP END** and runs `AUTHENTICATE PLAIN`; on the server's `AUTHENTICATE +` it sends `base64(authzid="" \0 username \0 password)` chunked to ≤400 bytes per line (an exact multiple of 400 terminates with a bare `+`)
+- Numerics: 900 informational (logged-in-as), **903 success** → CAP END releases registration; 907 (already authenticated) counts as success; **904/905/906 fail registration** with a surfaced error — the agent never appears online half-registered
+- **Fail closed**: auth configured but the server won't negotiate `sasl` (not offered, NAKed in fallback, or 410 abort) → registration error, not an anonymous session
+- SASL re-runs on every reconnect (negotiation is per-connection); PASS stays available for legacy passworded servers via `server.passwordEnv`
+
+**TLS options**: `server.tlsInsecure` (accept self-signed/internal CAs; default false, loud in docs), `server.tlsServerName` (SNI override behind proxies/port-forwards).
+
+**Validation**: the ergo fixture grows real accounts (`authentication-enabled: true`, open registration for the probe) and a TLS listener on 6697 with a generated self-signed cert. `scripts/sasl-smoke.mjs`: register a probe account via NickServ, connect the agent session with SASL over TLS, assert the 900/WHOIS account identity, project-channel join, cross-client delivery, and that a forced reconnect re-runs the SASL exchange.
 ## Terms
 
 | Term | Meaning |
