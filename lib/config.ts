@@ -91,7 +91,7 @@ export class ConfigError extends Error {
 
 const DEFAULTS = {
 	server: { port: 6697, tls: true },
-	nick: { template: "pi-{shortId}", maxLen: 30 },
+		nick: { template: "pi-{role}-{shortId}", maxLen: 30 },
 	channels: {
 		projectTemplate: "#pi-{slug}",
 		defaults: [] as string[],
