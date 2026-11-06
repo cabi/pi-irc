@@ -226,6 +226,19 @@ pi-irc/
 **TLS options**: `server.tlsInsecure` (accept self-signed/internal CAs; default false, loud in docs), `server.tlsServerName` (SNI override behind proxies/port-forwards).
 
 **Validation**: the ergo fixture grows real accounts (`authentication-enabled: true`, open registration for the probe) and a TLS listener on 6697 with a generated self-signed cert. `scripts/sasl-smoke.mjs`: register a probe account via NickServ, connect the agent session with SASL over TLS, assert the 900/WHOIS account identity, project-channel join, cross-client delivery, and that a forced reconnect re-runs the SASL exchange.
+**Shipped** as v0.3.0; `server.tlsCaFile` (v0.3.2) pins internal CAs.
+
+### P8 — Intercom parity: validated matrix, saner wake throttle
+
+**Problem.** The P6 features (ask/reply, busy presence, wake trust) shipped with mock/live smokes, but never as one coherent run against the operator's production server over TLS — and the wake throttle made the product worse than pi-intercom for follow-up DMs: a 60s quiet window meant a second message after a settled turn never woke an idle peer (buffered forever, read by nobody).
+
+**Mechanics**:
+- `scripts/intercom-parity.mjs`: 13-check end-to-end matrix against a configurable target (defaults to the operator's ergo at `irc.lan:6697`, TLS + pinned CA; `IRC_HOST/IRC_PORT/IRC_TLS/IRC_CA_FILE/CHANNEL_SUFFIX` re-target it). Covers roster discovery with roles, busy presence round-trip (AWAY/away-notify), ask → pending list + wake → reply → unblock, pending drains on both sides, wake trust three ways (roster-verified agent DM, allowlisted human via `hank*` glob, stranger buffered without wake), ask timeout on the asker, late-reply degradation to a plain DM, and a stock IRC human witnessing agent traffic on the same TLS wire.
+- `lib/session.ts`: `WAKE_QUIET_MS` 60_000 → 5_000. Bursts still dampen; distinct turns wake.
+
+**Validation**: 13/13 against the operator's live ergo; 191/191 unit tests.
+
+**Remaining gaps to pi-intercom**: addressing is by nick (rendered from `{role}/{shortId}`), not by session name/UUID; no `pending`-equivalent cross-session ask registry persisted across restarts (asks time out, late replies degrade gracefully); message history beyond `bufferMax` is lost (stock IRC ergo has no history replay unless the server offers it).
 ## Terms
 
 | Term | Meaning |
