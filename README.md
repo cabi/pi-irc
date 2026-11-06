@@ -9,10 +9,10 @@ See `PRODUCT.md` for the full product definition and `docs/decisions/` for the A
 pi-irc is a pi package (jiti-loaded TypeScript, no build step). Install straight from GitHub:
 
 ```bash
-pi install git:github.com/cabi/pi-irc@v0.2.0
+pi install git:github.com/cabi/pi-irc@v0.4.0
 ```
 
-That pins the `v0.2.0` tag — drop the tag for the moving default branch, or try it once without touching settings:
+That pins the `v0.4.0` tag — drop the tag for the moving default branch, or try it once without touching settings:
 
 ```bash
 pi -e git:github.com/cabi/pi-irc
