@@ -171,6 +171,31 @@ pi-irc/
 - **P3 (done)** real-server validation against ergo in Docker: `scripts/ergo-smoke.mjs` (10 checks — registration, CAP negotiation, channel auto-create, topic stamp, cross-client delivery, roster, wake, QUIT) and `scripts/ergo-agents.mjs` (10 checks — the two-agents + one-human coordination run). Surfaced and fixed: topic stamping must query TOPIC explicitly (ergo doesn't volunteer 331 on JOIN); topic stamp is best-effort when a human created the channel (creator-only op under mode +t)
 - **P4 (done)** hardening + packaging: KICK detection with buffered system line and delayed rejoin (`channels.kickRejoinDelayMs`, default 3 s, 0 stays out; `stop()` cancels); MIT license, npm metadata, `files` allowlist, `npm pack` verified at 33 kB / 20 files; 140 unit+integration tests, typecheck clean, both live ergo runs green (smoke 10 checks, coordination 10 checks). Accidental cross-server validation: against a local InspIRCd (port collision) the stack registered, joined, and delivered with caps silently empty — RFC 2812 degradation works outside ergo. No npm publish yet — the design gets falsified in real projects first.
 - **P5 (done)** real-project falsification against InspIRCd 4 (`irc.local`, stock modules plus `cap` + `ircv3_ctctags` + `ircv3_servertime`): both live runs green on the foreign daemon (smoke 10/10, coordination 10/10). Found and fixed in the field: (a) multi-cap `CAP REQ` is all-or-nothing — one unsupported cap bounced the whole set, so a NAK now falls back to per-cap REQs (8d24058); (b) config files are hand-edited — JSONC (comments, trailing commas) is now tolerated with a string-aware stripper (eb8633a); (c) a probe artifact taught the deeper lesson that session-dir attribution follows the startup dir — identity stays on `ctx.cwd` (06251fa). Live headless pi session in a scratch project (`pi --print`, global shim): correct nick/project/channel, roster with both humans, DM wake observed by the model mid-turn. 144 tests green.
+- **P6 (planned)** coordination parity with local buses (pi-intercom) over IRC DMs — spec below.
+
+### P6 — Ask/Reply RPC, busy presence, wake trust
+
+**Problem.** pi-irc replaces the broadcast/notify half of pi-intercom but not its coordination half: blocking `ask` with threaded `reply`, a `pending` registry, and session presence. Also, wake-on-DM currently trusts anyone on the server.
+
+**RPC envelope** (application text inside normal DMs; channels never interpret it):
+
+```
+[pi-ask <id> timeout=600] question text…
+[pi-reply <id>] answer text…
+```
+
+- `id`: 8-hex random, unique per outbound ask; `timeout` seconds, default 600
+- Rules: only DMs are parsed; a `[pi-reply]` with unknown `id` renders as a normal DM (late/foreign reply); replies are never longer than one DM chunk — the sender chunks, the receiver reassembles by `id`
+- Malformed envelopes are plain text (never an error on the wire)
+
+**Ask registry** (lib/rpc.ts): outbound asks (`id → {peer, question, sentAt, state: waiting|replied|timeout, reply, promise, timer}`), inbound asks (`id → {peer, question, receivedAt, resolvedAt}`). `ask` tool op blocks on the promise up to the timeout; on timeout the asker gets a timeout result and a system line. The askee sees the ask in `read` as `ASK from <nick> (id=…)` with the reply instruction `irc reply id=<id>`; `irc reply` wraps `[pi-reply <id>]`. `irc pending` lists both directions.
+
+**Busy presence**: `agent_start` → AWAY `busy since <hh:mm>`, `agent_settled` → UNAWAY (away-notify keeps peers' rosters fresh; WHO fallback H/G). Roster output gains a busy column. A busy session still receives asks — they buffer and surface next turn; the asker's timeout absorbs the delay.
+
+**Wake trust** (`wake.allowNicks`, globs, default empty = everyone — private-server default): when set, only matching nicks and roster-verified agents (realname metadata) wake a session; others' DMs buffer silently with one system line. Documented loudly: on shared servers, set the allowlist.
+
+**Non-goals kept**: no attachments payload (paste content in the message), no `handover` (session summarization is a host feature, not a bus feature), no supersedes/cancel (DMs are immutable once sent).
+
 ## Terms
 
 | Term | Meaning |
