@@ -12,6 +12,14 @@
     "agent-communication",
     "coding-agent"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://github.com/cabi/pi-irc.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cabi/pi-irc/issues"
+  },
+  "homepage": "https://github.com/cabi/pi-irc#readme",
   "engines": {
     "node": ">=20"
   },
@@ -38,7 +46,8 @@
     "jiti": "^2.7.0",
     "typescript": "^7.0.2"
   },
-  "dependencies": {
-    "typebox": "^1.4.5"
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "typebox": "*"
   }
 }

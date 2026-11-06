@@ -6,24 +6,37 @@ See `PRODUCT.md` for the full product definition and `docs/decisions/` for the A
 
 ## Install
 
-pi-irc is a pi extension (jiti-loaded TypeScript, no build step). Two ways to load it:
+pi-irc is a pi package (jiti-loaded TypeScript, no build step). Install straight from GitHub:
 
-**Global (all projects)** — drop a shim into the auto-discovered extensions dir:
-
-```ts
-// ~/.pi/agent/extensions/pi-irc.ts
-export { default } from "/abs/path/to/pi-irc/index.ts";
+```bash
+pi install git:github.com/cabi/pi-irc@v0.1.0
 ```
 
-**Explicit** — list the entry in your config:
+That pins the `v0.1.0` tag — drop the tag for the moving default branch, or try it once without touching settings:
+
+```bash
+pi -e git:github.com/cabi/pi-irc
+```
+
+`pi list` shows it, `pi update --extensions` reconciles, `pi remove git:github.com/cabi/pi-irc` uninstalls.
+
+**From a checkout** (hacking on it) — either point pi at the entry explicitly:
 
 ```jsonc
 // ~/.pi/agent/config.json (extension entry)
 { "extensions": ["/abs/path/to/pi-irc/index.ts"] }
 ```
 
-Then create `~/.pi/agent/pi-irc.json` (below) — until it exists the extension stays
-disabled with one info line. `/reload` in a running pi picks up edits to the checkout.
+…or drop a shim into the auto-discovered extensions dir:
+
+```ts
+// ~/.pi/agent/extensions/pi-irc.ts
+export { default } from "/abs/path/to/pi-irc/index.ts";
+```
+
+In both cases create `~/.pi/agent/pi-irc.json` (below) — until it exists the
+extension stays disabled with one info line. `/reload` in a running pi picks
+up edits to the checkout.
 
 ## Configure
 
