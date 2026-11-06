@@ -5,7 +5,7 @@
 		"tls": true,
 		"passwordEnv": "PI_IRC_PASSWORD",
 		"tlsInsecure": false,
-		// "tlsServerName": "irc.internal.example.net"  // SNI override, e.g. behind a port-forward
+		// "tlsCaFile": "~/.pi/agent/certs/irc.lan.pem"  // PEM of the internal CA / self-signed leaf — verified, not skipped
 	},
 	"auth": {
 		"username": "pi-agent",

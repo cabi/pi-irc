@@ -21,6 +21,8 @@ export interface ServerConfig {
 	/** TLS only: accept self-signed / internal-CA certificates (default false). */
 	tlsInsecure?: boolean;
 	/** TLS only: SNI server name override (behind proxies / port-forwards). */
+	/** TLS only: PEM file with the trusted internal CA / self-signed leaf ("~" allowed). */
+	tlsCaFile?: string;
 	tlsServerName?: string;
 }
 
@@ -299,6 +301,11 @@ export function loadConfig(opts: {
 		server.tlsInsecure !== undefined ? bool(server, "server.tlsInsecure", server.tlsInsecure) : undefined;
 	const tlsServerName =
 		server.tlsServerName !== undefined ? str(server, "server.tlsServerName", server.tlsServerName) : undefined;
+	const tlsCaFile =
+		server.tlsCaFile !== undefined ? str(server, "server.tlsCaFile", server.tlsCaFile) : undefined;
+	if (tlsCaFile !== undefined && tlsInsecure) {
+		throw new ConfigError("server.tlsCaFile", "set either tlsCaFile (verify) or tlsInsecure (skip) — not both");
+	}
 
 	let auth: AuthConfig | undefined;
 	const authRaw = merged.auth as Json | undefined;
@@ -323,6 +330,7 @@ export function loadConfig(opts: {
 			passwordEnv,
 			...(tlsInsecure !== undefined ? { tlsInsecure } : {}),
 			...(tlsServerName !== undefined ? { tlsServerName } : {}),
+			...(tlsCaFile !== undefined ? { tlsCaFile } : {}),
 		},
 		...(auth ? { auth } : {}),
 		nick: {

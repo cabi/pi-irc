@@ -28,6 +28,9 @@ import { Channels } from "./channels.ts";
 import { DeliveryQueue } from "./delivery.ts";
 import { Backoff, type BackoffOptions } from "./reconnect.ts";
 import { wire, type IrcMessage } from "./wire.ts";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 import {
 	AskRegistry,
@@ -72,6 +75,39 @@ export interface SendResult {
 }
 
 const BOOT_TIMEOUT_MS = 15_000;
+
+/** Connect arguments shared by the initial connect and every reconnect. */
+function connectOptsFor(config: PiIrcConfig): {
+	host: string;
+	port: number;
+	tls: boolean;
+	timeoutMs: number;
+	rejectUnauthorized?: boolean;
+	serverName?: string;
+	ca?: Buffer;
+} {
+	const s = config.server;
+	let ca: Buffer | undefined;
+	if (s.tls && s.tlsCaFile) {
+		const path = s.tlsCaFile.startsWith("~/") ? join(homedir(), s.tlsCaFile.slice(2)) : s.tlsCaFile;
+		try {
+			ca = readFileSync(path);
+		} catch (err) {
+			// Fail closed: a configured CA that cannot be read must stop the
+			// connect, not silently fall back to the default trust store.
+			throw new Error(`server.tlsCaFile unreadable (${path}): ${(err as Error).message}`);
+		}
+	}
+	return {
+		host: s.host,
+		port: s.port,
+		tls: s.tls,
+		timeoutMs: BOOT_TIMEOUT_MS,
+		...(s.tlsInsecure ? { rejectUnauthorized: false } : {}),
+		...(s.tlsServerName ? { serverName: s.tlsServerName } : {}),
+		...(ca ? { ca } : {}),
+	};
+}
 const WAKE_QUIET_MS = 60_000;
 const DEFAULT_ASK_TIMEOUT_SEC = 600;
 
@@ -162,14 +198,7 @@ export class IrcSession extends EventEmitter {
 				},
 				transport,
 			);
-			await transport.connect({
-				host: config.server.host,
-				port: config.server.port,
-				tls: config.server.tls,
-				...(config.server.tlsInsecure ? { rejectUnauthorized: false } : {}),
-			...(config.server.tlsServerName ? { serverName: config.server.tlsServerName } : {}),
-			timeoutMs: BOOT_TIMEOUT_MS,
-			});
+			await transport.connect(connectOptsFor(config));
 			// Waiters attach before registration starts: 001..376 can arrive
 			// in a single chunk, and a listener attached after `await` would
 			// miss motdEnd entirely.
@@ -372,14 +401,7 @@ export class IrcSession extends EventEmitter {
 		const spec = this.#reconnect;
 		if (!spec) throw new Error("no reconnect policy");
 		const transport = spec.transportFactory();
-		await transport.connect({
-			host: this.config.server.host,
-			port: this.config.server.port,
-			tls: this.config.server.tls,
-			...(this.config.server.tlsInsecure ? { rejectUnauthorized: false } : {}),
-			...(this.config.server.tlsServerName ? { serverName: this.config.server.tlsServerName } : {}),
-			timeoutMs: BOOT_TIMEOUT_MS,
-		});
+		await transport.connect(connectOptsFor(this.config));
 		this.client.attach(transport);
 		if (spec.password) this.client.sendRaw(wire.pass(spec.password));
 		const registeredP = onceOrThrow(this.client, "registered", "error", BOOT_TIMEOUT_MS, "re-registration");

@@ -15,6 +15,8 @@ export interface ConnectOptions {
 	rejectUnauthorized?: boolean;
 	/** TLS only: SNI server name override (defaults to `host`). */
 	serverName?: string;
+	/** TLS only: PEM bundle overriding the trust store (internal CAs / self-signed). */
+	ca?: Buffer;
 	/** Connection timeout in ms (default 15000). */
 	timeoutMs?: number;
 }
@@ -78,6 +80,7 @@ export class IrcSocket extends EventEmitter {
 					...common,
 					rejectUnauthorized: opts.rejectUnauthorized ?? true,
 					...(opts.serverName ? { servername: opts.serverName } : {}),
+					...(opts.ca ? { ca: [opts.ca] } : {}),
 				});
 			} else {
 				this.socket = net.connect(common);

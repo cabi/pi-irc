@@ -57,6 +57,8 @@ Minimal global config (see `docs/example.pi-irc.json` for all keys):
 
 Server passwords are referenced, never stored: `"passwordEnv": "PI_IRC_PASSWORD"`.
 
+Self-signed or internal-CA servers have two options — pin the cert (keeps full verification) or skip it entirely: `"server": { "tlsCaFile": "~/.pi/agent/certs/irc.lan.pem" }` or `"tlsInsecure": true`; the two are mutually exclusive.
+
 Authenticated networks (SASL PLAIN over TLS — Libera-class servers):
 
 ```jsonc

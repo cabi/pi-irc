@@ -1,6 +1,6 @@
 {
 	"name": "pi-irc",
-	"version": "0.3.1",
+	"version": "0.3.2",
 	"description": "IRC as the communication bus for pi agents and humans: RFC 2812 client-side implementation with background bootstrap, roster, and one lean `irc` tool",
 	"type": "module",
 	"license": "MIT",
