@@ -52,8 +52,9 @@ export class IrcClient extends EventEmitter {
 	state: ClientState = "idle";
 	nick: string;
 	private readonly spec: RegisterSpec;
-	private readonly transport: Transport;
+	#transport!: Transport;
 	private registeredAt: number | null = null;
+	#tHandlers: { line: (l: string) => void; close: () => void; error: (e: Error) => void } | null = null;
 	private lastServerLineAt = Date.now();
 	private watchdog: ReturnType<typeof setInterval> | null = null;
 	private fallbackIdx = 0;
@@ -64,24 +65,51 @@ export class IrcClient extends EventEmitter {
 		this.spec = spec;
 		this.nick = spec.nick;
 		this.currentNickBase = spec.nick;
-		this.transport = transport;
+		this.#bindTransport(transport);
+	}
 
-		this.transport.on("line", (line: string) => this.#onLine(line));
-		this.transport.on("close", () => {
-			this.#stopWatchdog();
-			this.state = "closed";
-			this.emit("socketClosed");
-		});
-		this.transport.on("error", (err: Error) => {
-			this.emit("error", { message: `socket: ${err.message}` });
-		});
+	#bindTransport(transport: Transport): void {
+		const handlers = {
+			line: (line: string) => this.#onLine(line),
+			close: () => {
+				this.#stopWatchdog();
+				this.state = "closed";
+				this.emit("socketClosed");
+			},
+			error: (err: Error) => this.emit("error", { message: `socket: ${err.message}` }),
+		};
+		transport.on("line", handlers.line);
+		transport.on("close", handlers.close);
+		transport.on("error", handlers.error);
+		this.#transport = transport;
+		this.#tHandlers = handlers;
+	}
+
+	/**
+	 * Swap in a fresh transport for reconnect: unbind the dead one, reset
+	 * registration state, and retry the original nick with fallbacks
+	 * re-armed (the old nick may still be held by a ghost connection).
+	 */
+	attach(transport: Transport): void {
+		if (this.#tHandlers) {
+			this.#transport.off("line", this.#tHandlers.line);
+			this.#transport.off("close", this.#tHandlers.close);
+			this.#transport.off("error", this.#tHandlers.error);
+		}
+		this.#stopWatchdog();
+		this.#bindTransport(transport);
+		this.state = "idle";
+		this.nick = this.spec.nick;
+		this.currentNickBase = this.spec.nick;
+		this.fallbackIdx = 0;
+		this.registeredAt = null;
 	}
 
 	/** Begin registration on an already-connected transport. */
 	startRegistration(): void {
 		this.state = "registering";
-		this.transport.send(wire.nick(this.nick));
-		this.transport.send(wire.user(this.spec.username, this.spec.realname));
+		this.#transport.send(wire.nick(this.nick));
+		this.#transport.send(wire.user(this.spec.username, this.spec.realname));
 		this.#startWatchdog();
 	}
 
@@ -94,41 +122,41 @@ export class IrcClient extends EventEmitter {
 	}
 
 	sendRaw(line: string): void {
-		this.transport.send(line);
+		this.#transport.send(line);
 	}
 
 	privmsg(target: string, text: string): void {
-		this.transport.send(wire.privmsg(target, text));
+		this.#transport.send(wire.privmsg(target, text));
 	}
 
 	notice(target: string, text: string): void {
-		this.transport.send(wire.notice(target, text));
+		this.#transport.send(wire.notice(target, text));
 	}
 
 	join(channels: string[]): void {
-		this.transport.send(wire.join(channels));
+		this.#transport.send(wire.join(channels));
 	}
 
 	part(channel: string, reason?: string): void {
-		this.transport.send(wire.part(channel, reason));
+		this.#transport.send(wire.part(channel, reason));
 	}
 
 	who(mask: string): void {
-		this.transport.send(wire.who(mask));
+		this.#transport.send(wire.who(mask));
 	}
 
 	/** Query or set a channel topic. `topic === null` queries only. */
 	topic(channel: string, topic: string): void {
-		this.transport.send(wire.topic(channel, topic));
+		this.#transport.send(wire.topic(channel, topic));
 	}
 
 	setTopic(channel: string, topic: string): void {
-		this.transport.send(wire.topic(channel, topic));
+		this.#transport.send(wire.topic(channel, topic));
 	}
 
 	quit(reason: string): void {
-		if (this.state !== "closed") this.transport.send(wire.quit(reason));
-		this.transport.close();
+		if (this.state !== "closed") this.#transport.send(wire.quit(reason));
+		this.#transport.close();
 	}
 
 	#onLine(rawLine: string): void {
@@ -143,7 +171,7 @@ export class IrcClient extends EventEmitter {
 		this.emit("message", msg);
 
 		if (msg.command === "PING") {
-			this.transport.send(wire.pong(msg.params[0] ?? "1"));
+			this.#transport.send(wire.pong(msg.params[0] ?? "1"));
 			return;
 		}
 		if (msg.command === "PONG") return;
@@ -214,11 +242,11 @@ export class IrcClient extends EventEmitter {
 				const pool = this.spec.nickFallbacks ?? NICK_FALLBACKS;
 				if (this.fallbackIdx >= pool.length) {
 					this.emit("error", { code, message: `all nick variants taken: ${this.currentNickBase}` });
-					this.transport.destroy();
+					this.#transport.destroy();
 					return;
 				}
 				this.nick = `${this.currentNickBase}${pool[this.fallbackIdx++]}`;
-				this.transport.send(wire.nick(this.nick));
+				this.#transport.send(wire.nick(this.nick));
 				break;
 			}
 			case NUMERICS.ERR_NOSUCHCHANNEL:
@@ -246,10 +274,10 @@ export class IrcClient extends EventEmitter {
 		this.watchdog = setInterval(() => {
 			if (Date.now() - this.lastServerLineAt > (this.spec.pingTimeoutMs ?? 120000)) {
 				this.emit("error", { message: "server silent beyond ping timeout" });
-				this.transport.destroy();
+				this.#transport.destroy();
 			} else if (Date.now() - this.lastServerLineAt > intervalMs) {
 				// Quiet link: probe liveness without waiting for a full timeout.
-				this.transport.send(wire.ping(`pi-${Date.now()}`));
+				this.#transport.send(wire.ping(`pi-${Date.now()}`));
 			}
 		}, intervalMs);
 		this.watchdog.unref?.();

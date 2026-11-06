@@ -26,6 +26,7 @@ import type { Peer } from "./roster.ts";
 import { Roster } from "./roster.ts";
 import { Channels } from "./channels.ts";
 import { DeliveryQueue } from "./delivery.ts";
+import { Backoff, type BackoffOptions } from "./reconnect.ts";
 import { wire, type IrcMessage } from "./wire.ts";
 
 export interface SessionDeps {
@@ -33,7 +34,28 @@ export interface SessionDeps {
 	client?: IrcClient;
 	transport?: Transport;
 	now?: () => number;
+	/**
+	 * Reconnect policy. Default for socket-backed sessions: fresh IrcSocket
+	 * per attempt + the server password captured at first connect. Injected
+	 * clients only reconnect when a spec is provided explicitly.
+	 */
+	reconnect?: Partial<ReconnectSpec>;
 }
+
+export interface ReconnectSpec {
+	transportFactory: () => Transport;
+	/** Server password captured at bootstrap (PASS before NICK/USER). */
+	password?: string;
+	backoff?: BackoffOptions;
+	/** Injectable scheduler; returns a cancel function. Default setTimeout. */
+	schedule?: (fn: () => void, ms: number) => () => void;
+}
+
+const defaultSchedule = (fn: () => void, ms: number): (() => void) => {
+	const t = setTimeout(fn, ms);
+	t.unref?.();
+	return () => clearTimeout(t);
+};
 
 export interface SendResult {
 	target: string;
@@ -55,17 +77,30 @@ export class IrcSession extends EventEmitter {
 	readonly buffer: MessageBuffer;
 	readonly delivery: DeliveryQueue;
 	private readonly now: () => number;
+	readonly #reconnect: ReconnectSpec | null;
+	readonly #backoff: Backoff;
+	#cancelScheduled: (() => void) | null = null;
+	#reconnectAttempt = 0;
+	#nextAttemptAt: number | null = null;
 	private lastWakeAt = 0;
 	private stopped = false;
 	private topicStampPending = false;
 
-	private constructor(config: PiIrcConfig, identity: IdentityContext, client: IrcClient, now: () => number) {
+	private constructor(
+		config: PiIrcConfig,
+		identity: IdentityContext,
+		client: IrcClient,
+		now: () => number,
+		reconnect: ReconnectSpec | null,
+	) {
 		super();
 		this.config = config;
 		this.identity = identity;
 		this.projectChannel = renderChannelName(config.channels.projectTemplate, config.projectSlug);
 		this.client = client;
 		this.now = now;
+		this.#reconnect = reconnect;
+		this.#backoff = new Backoff(reconnect?.backoff);
 		this.buffer = new MessageBuffer(config.delivery.bufferMax, client.realNick ?? client.nick);
 		this.delivery = new DeliveryQueue(
 			(target, text) => this.client.privmsg(target, text),
@@ -86,6 +121,7 @@ export class IrcSession extends EventEmitter {
 		deps: SessionDeps = {},
 	): Promise<IrcSession> {
 		const now = deps.now ?? Date.now;
+		const password = config.server.passwordEnv ? process.env[config.server.passwordEnv] : undefined;
 		let client = deps.client;
 		if (client) {
 			// Injected client: registration is the fixture's business.
@@ -105,14 +141,12 @@ export class IrcSession extends EventEmitter {
 				},
 				transport,
 			);
-			const password = config.server.passwordEnv ? process.env[config.server.passwordEnv] : undefined;
 			await transport.connect({
 				host: config.server.host,
 				port: config.server.port,
 				tls: config.server.tls,
 				timeoutMs: BOOT_TIMEOUT_MS,
 			});
-			if (password) client.sendRaw(wire.pass(password));
 			// Waiters attach before registration starts: 001..376 can arrive
 			// in a single chunk, and a listener attached after `await` would
 			// miss motdEnd entirely.
@@ -125,7 +159,13 @@ export class IrcSession extends EventEmitter {
 		}
 		if (deps.client) await onceOrThrow(client, "motdEnd", "error", BOOT_TIMEOUT_MS, "registration (MOTD)");
 
-		const session = new IrcSession(config, identity, client, now);
+		// Reconnect policy: real (socket-backed) sessions always get one;
+		// injected test clients only when the fixture provides a factory.
+		const reconnect: ReconnectSpec | null = deps.client
+			? (deps.reconnect?.transportFactory ? ({ ...deps.reconnect } as ReconnectSpec) : null)
+			: { transportFactory: () => new IrcSocket(), password, ...deps.reconnect };
+
+		const session = new IrcSession(config, identity, client, now, reconnect);
 
 		// Join the project channel (+ any extra defaults). The channel is
 		// created by the server on first JOIN — nothing else to bootstrap.
@@ -197,6 +237,90 @@ export class IrcSession extends EventEmitter {
 		});
 		c.on("message", (m) => this.#applyNumeric(m));
 		c.on("error", (e) => this.emit("sessionError", e.message));
+		c.on("socketClosed", () => this.#onDrop());
+	}
+
+	/**
+	 * The link died (server restart, network flap, ping timeout). Pause
+	 * pacing — queued intent survives — and schedule the first reconnect.
+	 */
+	#onDrop(): void {
+		if (this.stopped || !this.#reconnect) return;
+		this.delivery.stop();
+		this.#scheduleReconnect();
+	}
+
+	#scheduleReconnect(): void {
+		const attempt = (this.#reconnectAttempt += 1);
+		const delayMs = this.#backoff.next();
+		this.#nextAttemptAt = this.now() + delayMs;
+		this.emit("reconnecting", { attempt, delayMs });
+		this.#cancelScheduled?.();
+		const schedule = this.#reconnect?.schedule ?? defaultSchedule;
+		this.#cancelScheduled = schedule(() => {
+			void this.#tryReconnect();
+		}, delayMs);
+	}
+
+	async #tryReconnect(): Promise<void> {
+		if (this.stopped || !this.#reconnect) return;
+		const attempt = this.#reconnectAttempt;
+		try {
+			await this.#reestablish();
+			this.#backoff.reset();
+			this.#cancelScheduled = null;
+			this.#nextAttemptAt = null;
+			const nick = this.client.realNick;
+			this.#reconnectAttempt = 0;
+			this.emit("reconnected", { nick, attempt });
+		} catch (err) {
+			this.emit("sessionError", `reconnect attempt ${attempt} failed: ${(err as Error).message}`);
+			this.#scheduleReconnect();
+		}
+	}
+
+	/** Fresh transport → re-register → rejoin everything → reseed roster → flush queue. */
+	async #reestablish(): Promise<void> {
+		const spec = this.#reconnect;
+		if (!spec) throw new Error("no reconnect policy");
+		const transport = spec.transportFactory();
+		await transport.connect({
+			host: this.config.server.host,
+			port: this.config.server.port,
+			tls: this.config.server.tls,
+			timeoutMs: BOOT_TIMEOUT_MS,
+		});
+		this.client.attach(transport);
+		if (spec.password) this.client.sendRaw(wire.pass(spec.password));
+		const registeredP = onceOrThrow(this.client, "registered", "error", BOOT_TIMEOUT_MS, "re-registration");
+		const motdP = onceOrThrow(this.client, "motdEnd", "error", BOOT_TIMEOUT_MS, "re-registration (MOTD)");
+		this.client.startRegistration();
+		await registeredP;
+		await motdP;
+
+		// Rejoin every channel we still hold locally — the server forgot us.
+		// JOIN even where channels.joined() says yes: local state survived,
+		// server-side membership did not.
+		const chans = this.channels.list().map((ch) => ch.name);
+		if (chans.length > 0) {
+			const echoes = chans.map((ch) =>
+				onceOrThrow<{ self: boolean; channel: string }>(
+					this.client, "join", "error", BOOT_TIMEOUT_MS, `rejoining ${ch}`,
+					(e) => e.self && e.channel.toLowerCase() === ch.toLowerCase(),
+				),
+			);
+			this.client.join(chans);
+			await Promise.all(echoes);
+			for (const ch of chans) {
+				this.client.who(ch);
+				await onceOrThrow<IrcMessage>(this.client, "message", "error", BOOT_TIMEOUT_MS, `WHO ${ch}`, (m) =>
+					m.command === String(NUMERICS.RPL_ENDOFWHO) && m.params[1]?.toLowerCase() === ch.toLowerCase(),
+				);
+			}
+		}
+
+		this.delivery.start();
+		this.delivery.drain(); // flush whatever queued while the link was down
 	}
 
 	#applyNumeric(m: { command: string; params: string[] }): void {
@@ -231,6 +355,11 @@ export class IrcSession extends EventEmitter {
 		}
 	}
 
+	#pendingReconnect(): { attempt: number; nextInMs: number } | null {
+		if (this.#cancelScheduled === null || this.#nextAttemptAt === null) return null;
+		return { attempt: this.#reconnectAttempt, nextInMs: Math.max(0, this.#nextAttemptAt - this.now()) };
+	}
+
 	#maybeWake(from: string, text: string): void {
 		if (!this.config.delivery.wakeOnDirectMessage) return;
 		const now = this.now();
@@ -249,6 +378,9 @@ export class IrcSession extends EventEmitter {
 			projectChannel: this.projectChannel,
 			connection: this.client.state,
 			channels: this.channels.list().map((ch) => ch.name),
+			...(this.#pendingReconnect()
+				? { reconnect: this.#pendingReconnect() }
+				: {}),
 			unread: this.buffer.unreadAll(),
 		};
 	}
@@ -295,6 +427,8 @@ export class IrcSession extends EventEmitter {
 	stop(reason = "session shutdown"): void {
 		if (this.stopped) return;
 		this.stopped = true;
+		this.#cancelScheduled?.();
+		this.#cancelScheduled = null;
 		this.delivery.stop();
 		try {
 			this.client.quit(reason);
