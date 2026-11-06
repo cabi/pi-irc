@@ -80,6 +80,8 @@ export class Roster {
 			kind: patch.kind ?? existing?.kind ?? "human",
 			role: patch.role ?? existing?.role,
 			project: patch.project ?? existing?.project,
+			session: patch.session ?? existing?.session,
+			parent: patch.parent ?? existing?.parent,
 			lastSeen: patch.lastSeen ?? Date.now(),
 			self: patch.self ?? existing?.self ?? this.selfNick === key,
 			away: patch.away ?? existing?.away,

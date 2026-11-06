@@ -623,9 +623,42 @@ export class IrcSession extends EventEmitter {
 		});
 		return this.roster.all().map(view).sort((a, b) => String(a.nick).localeCompare(String(b.nick)));
 	}
+	/**
+	 * Resolve an addressing spec to a nick or channel:
+	 *   "@abc123" → the agent whose session id starts with abc123
+	 *   "main"/"sub" → the sole agent with that role (ambiguous → error)
+	 * Channels and raw nicks pass through untouched. Throws with the
+	 * candidate list when a selector matches nobody or several peers —
+	 * agents should then address by @session instead.
+	 */
+	resolveTarget(spec: string): string {
+		if (/^[#&+]/.test(spec)) return spec;
+		const agents = this.roster.all().filter((p) => !p.self && p.session);
+		const fail = (why: string, known: Peer[]) =>
+			new Error(`${why} (known agents: ${known.map((p) => `${p.nick} @${p.session}`).join(", ") || "none"})`);
+		if (spec.startsWith("@")) {
+			const frag = spec.slice(1).toLowerCase();
+			if (!frag) throw fail("empty @session selector", agents);
+			const hits = agents.filter((p) => p.session?.toLowerCase().startsWith(frag));
+			if (hits.length === 1) return hits[0].nick;
+			throw fail(
+				hits.length === 0 ? `no agent session starts with "${frag}"` : `session prefix "${frag}" is ambiguous (${hits.length} agents)`,
+				hits.length > 0 ? hits : agents,
+			);
+		}
+		if (spec === "main" || spec === "sub") {
+			const hits = agents.filter((p) => p.role === spec);
+			if (hits.length === 1) return hits[0].nick;
+			throw fail(
+				hits.length === 0 ? `no ${spec} agent in the roster` : `${hits.length} ${spec} agents — address by @session instead`,
+				hits.length > 0 ? hits : agents,
+			);
+		}
+		return spec;
+	}
 
 	send(target: string | undefined, text: string): SendResult {
-		const to = target ?? this.projectChannel;
+		const to = this.resolveTarget(target ?? this.projectChannel);
 		const chunks = this.delivery.enqueue(to, text);
 		this.delivery.drain();
 		return { target: to, chunks, pending: this.delivery.pending() };
@@ -637,10 +670,11 @@ export class IrcSession extends EventEmitter {
 	 * serving while we wait: inbound traffic flows, asks from others buffer.
 	 */
 	async ask(
-		peer: string,
+		rawPeer: string,
 		question: string,
 		timeoutSec = DEFAULT_ASK_TIMEOUT_SEC,
 	): Promise<AskResolution> {
+		const peer = this.resolveTarget(rawPeer);
 		const timeoutMs = Math.min(3_600, Math.max(1, timeoutSec)) * 1_000;
 		const { id, done } = this.rpc.trackOutbound(peer, question, timeoutMs);
 		for (const part of envelopeParts("ask", id, question, this.delivery.maxChunk, timeoutSec)) {
