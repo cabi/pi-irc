@@ -136,8 +136,10 @@ export const wire = {
 	pong: (token: string) => formatLine({ command: "PONG", params: [token] }),
 	quit: (reason: string) => formatLine({ command: "QUIT", trailing: reason }),
 	who: (mask: string) => formatLine({ command: "WHO", params: [mask] }),
-	topic: (channel: string, topic: string) =>
-		formatLine({ command: "TOPIC", params: [channel], trailing: topic }),
+	topic: (channel: string, topic?: string) =>
+		topic === undefined
+			? formatLine({ command: "TOPIC", params: [channel] })
+			: formatLine({ command: "TOPIC", params: [channel], trailing: topic }),
 };
 
 /** Max bytes of PRIVMSG text guaranteed to fit: 512 - overhead, conservative. */

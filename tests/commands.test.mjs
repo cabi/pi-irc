@@ -71,6 +71,9 @@ class CaplessServer extends EventEmitter {
 	#autoAnswer(line) {
 		const [, cmd, rest = ""] = /^(\S+)(?:\s+(.*))?$/.exec(line) ?? [];
 		const me = this.#client?.nick;
+		if (cmd === "TOPIC") {
+			this.say(`:srv 331 ${me} ${rest} :No topic is set`);
+		}
 		if (cmd === "WHO") {
 			this.say(`:srv 352 ${me} ${rest} u h srv carol H :0 Carsten`);
 			this.say(`:srv 315 ${me} ${rest} :End of /WHO list`);

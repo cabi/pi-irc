@@ -179,8 +179,11 @@ test("failed attempts back off and eventually succeed", async (t) => {
 	server.clients[0].socket.destroy();
 
 	await once(session, "reconnected", 3000);
-	assert.equal(errors.length, 2);
-	assert.match(errors[0], /reconnect attempt 1 failed: connection refused/);
+	// The post-boot topic stamp write makes the destroy() below surface as
+	// one harmless "read ECONNRESET" sessionError — only count real attempts.
+	const attempts = errors.filter((e) => /reconnect attempt/.test(e));
+	assert.equal(attempts.length, 2);
+	assert.match(attempts[0], /reconnect attempt 1 failed: connection refused/);
 	assert.equal(session.status().connection, "registered");
 });
 
@@ -226,6 +229,8 @@ test("injected clients without a reconnect factory never reconnect", async (t) =
 	client.emit("join", { nick: "pi-main-s1", channel: "#pi-proj", self: true });
 	await sleep(5);
 	client.emit("message", { command: "315", params: ["pi-main-s1", "#pi-proj", "End of WHO"] });
+	await sleep(5);
+	client.emit("message", { command: "331", params: ["pi-main-s1", "#pi-proj", "No topic is set"] });
 	const session = await booting;
 	t.after(() => session.stop());
 

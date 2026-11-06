@@ -1,0 +1,44 @@
+# Minimal single-tenant ergo config for pi-irc integration validation
+# (P3): plain RFC 2812 listener on 6667, no accounts, no history,
+# channels created freely on first JOIN — the environment PRODUCT.md
+# assumes a friendly internal IRC server provides.
+network:
+  name: PiTestNet
+
+server:
+  name: ergo.pi.test
+  listeners:
+    ":6667": {}
+  casemapping: ascii
+  enforce-utf8: true
+  lookup-hostnames: false
+  forward-confirm-hostnames: false
+  connection-limits:
+    enabled: false
+  ip-limits:
+    enabled: false
+  ip-cloaking:
+    enabled: false
+
+datastore:
+  path: /ergo/data/ergo.db
+  autoupgrade: true
+
+accounts:
+  authentication-enabled: false
+  require-sasl:
+    enabled: false
+  registration:
+    enabled: false
+
+channels:
+  default-modes: nt
+  registration:
+    enabled: false
+
+history:
+  enabled: false
+
+logs:
+  - method: stderr
+    level: info

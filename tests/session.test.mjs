@@ -63,6 +63,15 @@ class FakeServer extends EventEmitter {
 				}
 				break;
 			}
+			case "TOPIC": {
+				// Query form: 331 or 332 depending on fixture state.
+				this.say(
+					this.topic
+						? `:srv 332 ${me} ${rest} :${this.topic}`
+						: `:srv 331 ${me} ${rest} :No topic is set`,
+				);
+				break;
+			}
 			case "WHO": {
 				const mask = rest.split(" ")[0];
 				this.say(`:srv 315 ${me} ${mask} :End of WHO list`);
@@ -125,7 +134,7 @@ test("connect: joins project channel, stamps topic, seeds roster", async () => {
 	assert.equal(session.projectChannel, "#pi-proj");
 	assert.ok(srv.lines.some((l) => l === "JOIN #pi-proj"), "JOIN sent");
 	// 331 (no topic) + autoCreate → topic stamp sent with slug and date.
-	const stamp = srv.lines.find((l) => l.startsWith("TOPIC #pi-proj"));
+	const stamp = srv.lines.find((l) => /^TOPIC #pi-proj :pi proj/.test(l));
 	assert.ok(stamp, "TOPIC sent");
 	assert.match(stamp, /pi proj — \d{4}-\d{2}-\d{2}$/);
 	// Roster seeded from NAMES + WHO.
@@ -143,17 +152,9 @@ test("connect: joins project channel, stamps topic, seeds roster", async () => {
 
 test("connect: no topic stamp when a topic exists", async () => {
 	const srv = new FakeServer();
-	// After the auto-answer's 331, a real server with an existing topic
-	// would have sent 332 instead — replay that correction.
-	const origSay = srv.say.bind(srv);
-	srv.say = (line) => {
-		origSay(line);
-		if (line.includes(" 331 ")) {
-			origSay(":srv 332 pi-main-s1 #pi-proj :pre-existing topic");
-		}
-	};
+	srv.topic = "pre-existing topic";
 	const { session } = await boot({}, srv);
-	assert.ok(!srv.lines.some((l) => l.startsWith("TOPIC")), "no TOPIC when one exists");
+	assert.ok(!srv.lines.some((l) => /^TOPIC #pi-proj :/.test(l)), "no topic SET when one exists");
 	assert.equal(session.channels.get("#pi-proj").topic, "pre-existing topic");
 	session.stop();
 });

@@ -203,6 +203,10 @@ class CapServer extends EventEmitter {
 				}
 				break;
 			}
+			case "TOPIC": {
+				this.say(`:srv 331 ${me} ${rest} :No topic is set`);
+				break;
+			}
 			case "WHO": {
 				const mask = rest.split(" ")[0];
 				this.say(`:srv 315 ${me} ${mask} :End of WHO list`);

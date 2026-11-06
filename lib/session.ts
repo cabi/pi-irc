@@ -192,10 +192,18 @@ export class IrcSession extends EventEmitter {
 			m.command === String(NUMERICS.RPL_ENDOFWHO) && m.params[1]?.toLowerCase() === chan.toLowerCase(),
 		);
 
-		// Topic stamp on a fresh channel (server told us 331 = no topic).
-		if (config.channels.autoCreate && session.topicStampPending) {
-			client.topic(chan, renderStamp(config.channels.topicTemplate, config.projectSlug, now()));
-			session.topicStampPending = false;
+		// Topic stamp on a fresh channel. Ergo (and others) only answer a
+		// topic QUERY with 331 — they don't volunteer it on JOIN — so ask.
+		if (config.channels.autoCreate) {
+			client.topic(chan);
+			await onceOrThrow<IrcMessage>(client, "message", "error", BOOT_TIMEOUT_MS, `TOPIC ${chan}`, (m) =>
+				(m.command === String(NUMERICS.RPL_TOPIC) || m.command === String(NUMERICS.RPL_NOTOPIC)) &&
+				m.params[1]?.toLowerCase() === chan.toLowerCase(),
+			);
+			if (session.topicStampPending) {
+				client.topic(chan, renderStamp(config.channels.topicTemplate, config.projectSlug, now()));
+				session.topicStampPending = false;
+			}
 		}
 		return session;
 	}

@@ -175,12 +175,8 @@ export class IrcClient extends EventEmitter {
 		this.#transport.send(wire.who(mask));
 	}
 
-	/** Query or set a channel topic. `topic === null` queries only. */
-	topic(channel: string, topic: string): void {
-		this.#transport.send(wire.topic(channel, topic));
-	}
-
-	setTopic(channel: string, topic: string): void {
+	/** Query or set a channel topic; `topic === undefined` queries only. */
+	topic(channel: string, topic?: string): void {
 		this.#transport.send(wire.topic(channel, topic));
 	}
 

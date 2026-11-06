@@ -85,6 +85,11 @@ export class MockIrcServer extends net.Server {
 				}
 				break;
 			}
+			case "TOPIC": {
+				// Query form (no second param): answer like ergo — 331, no topic.
+				if (params.length === 1) this.#send(client, `:mock 331 ${client.nick} ${params[0]} :No topic is set`);
+				break;
+			}
 			case "PING":
 				this.#send(client, `:mock PONG mock ${params[0] ?? ""}`.trimEnd());
 				break;
