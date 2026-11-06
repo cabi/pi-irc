@@ -29,6 +29,13 @@ import { DeliveryQueue } from "./delivery.ts";
 import { Backoff, type BackoffOptions } from "./reconnect.ts";
 import { wire, type IrcMessage } from "./wire.ts";
 
+import {
+	AskRegistry,
+	ReplyAssembler,
+	envelopeParts,
+	parseEnvelope,
+	type AskResolution,
+} from "./rpc.ts";
 export interface SessionDeps {
 	/** Injectable for tests: an already-registered client (skips PASS/001). */
 	client?: IrcClient;
@@ -66,6 +73,7 @@ export interface SendResult {
 
 const BOOT_TIMEOUT_MS = 15_000;
 const WAKE_QUIET_MS = 60_000;
+const DEFAULT_ASK_TIMEOUT_SEC = 600;
 
 export class IrcSession extends EventEmitter {
 	readonly config: PiIrcConfig;
@@ -82,10 +90,14 @@ export class IrcSession extends EventEmitter {
 	#cancelScheduled: (() => void) | null = null;
 	#reconnectAttempt = 0;
 	#cancelKickRejoin: (() => void) | null = null;
+
 	#nextAttemptAt: number | null = null;
 	private lastWakeAt = 0;
 	private stopped = false;
 	private topicStampPending = false;
+	/** ask/reply correlation (P6); public read for the tool layer. */
+	readonly rpc = new AskRegistry();
+	readonly #replies = new ReplyAssembler();
 
 	private constructor(
 		config: PiIrcConfig,
@@ -220,16 +232,56 @@ export class IrcSession extends EventEmitter {
 				this.buffer.push({ conv: e.target, from: e.from, text: e.text, ...(at ? { ts: at } : {}) });
 				this.roster.touch(e.from);
 			} else if (!e.toSelf) {
-				// DM to us: buffer under the sender's nick, consider a wake.
-				this.buffer.push({
-					conv: e.from,
-					from: e.from,
-					text: e.text,
-					kind: "dm",
-					...(at ? { ts: at } : {}),
-				});
-				this.roster.touch(e.from);
-				this.#maybeWake(e.from, e.text);
+				// DM to us: envelopes first, plain text second.
+				const env = parseEnvelope(e.text);
+				if (env?.kind === "ask") {
+					const inbound = this.rpc.trackInbound(env.id, e.from, env.body);
+					this.buffer.push({
+						conv: e.from,
+						from: e.from,
+						text: `${env.body} [ask id=${env.id}${inbound.resolvedAt === undefined ? ` — reply with: irc reply id=${env.id}` : ""}]`,
+						kind: "ask",
+						...(at ? { ts: at } : {}),
+					});
+					this.roster.touch(e.from);
+					this.#maybeWake(e.from, env.body);
+				} else if (env?.kind === "reply") {
+					const joined = this.#replies.add(env.id, env.part, env.body);
+					if (joined !== null && this.rpc.resolveReply(env.id, joined)) {
+						// Answer to one of our waiting asks — no wake: the asker
+						// is blocked inside the ask() tool call of a live turn.
+						this.buffer.push({
+							conv: e.from,
+							from: e.from,
+							text: joined,
+							kind: "reply",
+							...(at ? { ts: at } : {}),
+						});
+						this.roster.touch(e.from);
+					} else {
+						// Late or foreign reply: surface as a normal DM (wakeable).
+						this.buffer.push({
+							conv: e.from,
+							from: e.from,
+							text: e.text,
+							kind: "dm",
+							...(at ? { ts: at } : {}),
+						});
+						this.roster.touch(e.from);
+						this.#maybeWake(e.from, e.text);
+					}
+				} else {
+					// DM to us: buffer under the sender's nick, consider a wake.
+					this.buffer.push({
+						conv: e.from,
+						from: e.from,
+						text: e.text,
+						kind: "dm",
+						...(at ? { ts: at } : {}),
+					});
+					this.roster.touch(e.from);
+					this.#maybeWake(e.from, e.text);
+				}
 			}
 			// Our own echoes (toSelf) are already accounted for by send().
 		});
@@ -459,6 +511,58 @@ export class IrcSession extends EventEmitter {
 		const chunks = this.delivery.enqueue(to, text);
 		this.delivery.drain();
 		return { target: to, chunks, pending: this.delivery.pending() };
+		return { target: to, chunks, pending: this.delivery.pending() };
+	}
+
+	/**
+	 * Ask a peer over a correlated DM envelope and wait for the reply.
+	 * Resolves with the peer's answer, or a timeout result. The session keeps
+	 * serving while we wait: inbound traffic flows, asks from others buffer.
+	 */
+	async ask(
+		peer: string,
+		question: string,
+		timeoutSec = DEFAULT_ASK_TIMEOUT_SEC,
+	): Promise<AskResolution> {
+		const timeoutMs = Math.min(3_600, Math.max(1, timeoutSec)) * 1_000;
+		const { id, done } = this.rpc.trackOutbound(peer, question, timeoutMs);
+		for (const part of envelopeParts("ask", id, question, this.delivery.maxChunk, timeoutSec)) {
+			this.delivery.enqueue(peer, part);
+		}
+		this.delivery.drain();
+		this.buffer.push({
+			conv: peer,
+			from: this.client.realNick ?? this.client.nick,
+			text: `asked ${peer} (id=${id}): ${question}`,
+			kind: "system",
+		});
+		return done;
+	}
+
+	/**
+	 * Answer an ask another session sent us. One reply per ask id; unknown or
+	 * already-answered ids throw with the pending list spelled out.
+	 */
+	reply(id: string, text: string): { id: string; to: string; parts: number } {
+		const pending = this.rpc.pendingInbound().find((a) => a.id === id);
+		if (!pending) {
+			const open = this.rpc
+				.pendingInbound()
+				.map((a) => `${a.id} from ${a.peer}`)
+				.join(", ");
+			throw new Error(`unknown or already-answered ask id=${id}. Pending: ${open || "(none)"}`);
+		}
+		this.rpc.resolveInbound(id, text);
+		const parts = envelopeParts("reply", id, text, this.delivery.maxChunk);
+		for (const part of parts) this.delivery.enqueue(pending.peer, part);
+		this.delivery.drain();
+		this.buffer.push({
+			conv: pending.peer,
+			from: this.client.realNick ?? this.client.nick,
+			text: `replied to ${pending.peer} (ask id=${id}): ${text}`,
+			kind: "system",
+		});
+		return { id, to: pending.peer, parts: parts.length };
 	}
 
 	read(opts: ReadOptions = {}): BufferedMessage[] {
@@ -486,6 +590,7 @@ export class IrcSession extends EventEmitter {
 		this.#cancelScheduled = null;
 		this.#cancelKickRejoin?.();
 		this.#cancelKickRejoin = null;
+		this.rpc.dispose();
 		this.delivery.stop();
 		try {
 			this.client.quit(reason);

@@ -62,6 +62,10 @@ export class DeliveryQueue {
 	private timer: ReturnType<typeof setInterval> | null = null;
 	/** Paused while the link is down: items queue up, drain sends nothing. */
 	private paused = false;
+	/** Chunk budget the queue was built with (envelope writers respect it). */
+	get maxChunk(): number {
+		return this.opts.maxChunk;
+	}
 
 	constructor(
 		private readonly sender: (target: string, text: string) => void,

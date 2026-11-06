@@ -7,7 +7,7 @@
  * casing is kept on each message for display.
  */
 
-export type MessageKind = "chan" | "dm" | "notice" | "action" | "system";
+export type MessageKind = "chan" | "dm" | "notice" | "action" | "system" | "ask" | "reply";
 
 export interface BufferedMessage {
 	/** Monotonic sequence number across the whole buffer. */
