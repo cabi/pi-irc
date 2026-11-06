@@ -108,7 +108,9 @@ function connectOptsFor(config: PiIrcConfig): {
 		...(ca ? { ca } : {}),
 	};
 }
-const WAKE_QUIET_MS = 60_000;
+// Wake throttle: damp DM bursts, don't suppress distinct turns. Intercom
+// parity means a follow-up DM after a settled turn still wakes the peer.
+const WAKE_QUIET_MS = 5_000;
 const DEFAULT_ASK_TIMEOUT_SEC = 600;
 
 export class IrcSession extends EventEmitter {
