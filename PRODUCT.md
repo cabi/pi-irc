@@ -238,7 +238,22 @@ pi-irc/
 
 **Validation**: 13/13 against the operator's live ergo; 191/191 unit tests.
 
-**Remaining gaps to pi-intercom**: addressing is by nick (rendered from `{role}/{shortId}`), not by session name/UUID; no `pending`-equivalent cross-session ask registry persisted across restarts (asks time out, late replies degrade gracefully); message history beyond `bufferMax` is lost (stock IRC ergo has no history replay unless the server offers it).
+### P9 — Real-session drill: extension host in the loop, ergo history
+
+**Problem.** Every validation so far drove `lib/session.ts` directly (smokes) or the entry against a mock (`tests/entry.test.mjs`). Nothing proved the *whole* product: a real pi process, real extension host, real tool surface, real config merge — against the operator's ergo over TLS. And ergo's history subsystem was never reconciled with pi-irc's delivery model.
+
+**Mechanics** (`scripts/drill-agents.mjs`):
+- Scratch project `/tmp/pi-irc-drill-<ts>` + project-local `pi install -l` (user's global settings untouched) + `.pi/pi-irc.json` channel override. Global config (`irc.lan:6697`, TLS, pinned CA) still applies — the real merge path.
+- Two `pi -p` agents choreographed without hardcoded nicks (shortId is pi's session id): main roster-polls until a `pi-sub-*` appears, then a **blocking ask across processes**; sub pending-polls, replies, announces. A PONG-aware stock TLS observer witnesses the channel transcript. 9 checks, all green.
+
+**Findings fixed**:
+- pi hands **identical session ids** to same-cwd `pi -p` processes (ergo log: `session=01a1b313` for both). Default nick `pi-{shortId}` collided → ergo rename `pi-01a1b313-1`, no role in the addressing surface. Default template is now `pi-{role}-{shortId}` (config.ts DEFAULTS), matching what PRODUCT.md and the sample global config always claimed.
+
+**ergo history status** (operator's `ergo-data/ircd.yaml`): storage on (`channel-length: 2048`, `client-length: 256`), `chathistory-maxmessages: 1000`, caps offered: `draft/chathistory`, `draft/event-playback`, `draft/read-marker`. **But `autoreplay-on-join: 0`** — joiners get nothing replayed automatically. pi-irc today buffers only what arrives while connected; explicit `CHATHISTORY` catch-up (channels *and* DMs) is the open P10 candidate.
+
+**Validation**: drill 9/9 against the operator's ergo; 191/191 unit tests.
+
+**Remaining gaps to pi-intercom**: addressing is by nick (rendered from `{role}/{shortId}`), not by session name/UUID; no `pending`-equivalent cross-session ask registry persisted across restarts (asks time out, late replies degrade gracefully); message history beyond `bufferMax` is lost on the client side (server-side CHATHISTORY catch-up would close this).
 ## Terms
 
 | Term | Meaning |
