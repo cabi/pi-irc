@@ -22,6 +22,10 @@ export interface Peer {
 	/** Project slug the agent claims; may differ from ours (shared server). */
 	project?: string;
 	lastSeen: number;
+	/** Owning session short id (agents only). */
+	session?: string;
+	/** Parent session short id for sub-agents. */
+	parent?: string;
 	/** True for our own connection's nick. */
 	self: boolean;
 }
@@ -30,6 +34,8 @@ export interface RealnameInfo {
 	kind: PeerKind;
 	role?: AgentRole;
 	project?: string;
+	session?: string;
+	parent?: string;
 }
 
 const REALNAME_PREFIX = "pi-agent";
@@ -48,6 +54,8 @@ export function parseRealname(realname: string): RealnameInfo {
 		const value = part.slice(eq + 1);
 		if (key === "role" && (value === "main" || value === "sub")) info.role = value;
 		if (key === "project" && value.length > 0) info.project = value;
+		if (key === "session" && value.length > 0) info.session = value;
+		if (key === "parent" && value.length > 0) info.parent = value;
 	}
 	return info;
 }
@@ -80,7 +88,13 @@ export class Roster {
 	/** Apply a parsed realname (from WHO/WHOX) to a nick. */
 	applyRealname(nick: string, realname: string): Peer {
 		const info = parseRealname(realname);
-		return this.touch(nick, { kind: info.kind, role: info.role, project: info.project });
+		return this.touch(nick, {
+			kind: info.kind,
+			role: info.role,
+			project: info.project,
+			session: info.session,
+			parent: info.parent,
+		});
 	}
 
 	/** A nick changed identity; move the entry under the new nick. */
