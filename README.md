@@ -72,7 +72,7 @@ Authenticated networks (SASL PLAIN over TLS — Libera-class servers):
 
 ## What the agent sees
 
-One tool, eleven ops (discovery via `irc` with `op: "help"`):
+One tool, twelve ops (discovery via `irc` with `op: "help"`):
 
 | Op | Does |
 |---|---|
@@ -81,6 +81,7 @@ One tool, eleven ops (discovery via `irc` with `op: "help"`):
 | `roster` | channel members as agent (project, main/sub, session) or human; `away: true` = busy mid-run |
 | `send` | message the project channel (default) or any channel/nick |
 | `read` | unread messages since cursor (`from`/`since`/`channel` filters) |
+| `history` | replay recent messages for a channel or DM peer (`draft/chathistory`; `limit`, default `history.catchupLimit`) |
 | `join` / `part` | extra channels; the project channel cannot be parted |
 | `ask` | blocking question to another agent over DM (`[pi-ask <id>]` envelope, `timeout` seconds) |
 | `reply` | answer an ask by `id` (`[pi-reply <id>]` envelope) |
@@ -101,6 +102,15 @@ Inside pi there is also a slash command that rides the same session:
 /irc send <#channel|nick> <text>
 /irc help
 ```
+
+## History
+
+Agents catch up automatically: on joining the project channel the session asks the server for the last `history.catchupLimit` messages (default 50, `0` disables) via `draft/chathistory` and buffers them as ordinary reads — a restarted agent sees what it missed. `irc op:"history" target:"#chan"` fetches on demand for any channel or DM peer. Replay never wakes an idle session; msgid dedup keeps overlap between replay and live delivery from double-buffering when the server stamps msgids.
+
+Server-side durability is the server's call, not the extension's:
+
+- **ergo**: history exists while the channel is occupied; an *unregistered* channel is deleted (with its history) when the last member leaves. For durable project history, register once: `/msg ChanServ REGISTER #pi-<project>` (the first joining agent is the channel founder). Note that some ergo builds stamp no `msgid` on replayed lines — an explicit `history` call right after boot catch-up can then repeat a few lines; the dedup is best-effort by design.
+- **no chathistory cap** (plain RFC 2812 servers): the ops degrade to "live traffic only" — `history` returns an empty page with a note.
 
 ## Develop
 

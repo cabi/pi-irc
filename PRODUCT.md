@@ -254,6 +254,24 @@ pi-irc/
 **Validation**: drill 9/9 against the operator's ergo; 191/191 unit tests.
 
 **Remaining gaps to pi-intercom**: addressing is by nick (rendered from `{role}/{shortId}`), not by session name/UUID; no `pending`-equivalent cross-session ask registry persisted across restarts (asks time out, late replies degrade gracefully); message history beyond `bufferMax` is lost on the client side (server-side CHATHISTORY catch-up would close this).
+### P10 — CHATHISTORY: catch-up on join, fetch on demand, dedup
+
+**Problem.** ergo has `autoreplay-on-join: 0` (P9): a joining agent sees nothing of what happened before, and pi-irc's buffer dies with the process. Restarted or late agents were blind; the P9 gap list named server-side catch-up as the closer.
+
+**Mechanics**:
+- Client: `draft/chathistory` + `batch` negotiated by default; `IrcClient.chathistory()` sends `CHATHISTORY LATEST <target> * <limit>` and collects the server's `BATCH`-wrapped replay (batch-scoped, 10 s cap — servers without proper batching can never hang a boot).
+- Session: project-channel self-join fires a best-effort catch-up (serialized, fire-and-forget); `irc op:"history" target:…` fetches any channel or DM peer and drains it as a read; replayed lines buffer like live ones but **never wake**; msgid dedup (8 000-entry set) kills replay/live overlap.
+- Config: `history.catchupLimit` (default 50, `0` disables).
+
+**Live validation** (operator's ergo, plaintext 6667): B joins before A parts → channel never empties → A₂ boot catch-up replayed 6 lines including A's message. Raw probes confirmed the negotiation trap: a CAP REQ containing a cap the server doesn't offer (`msgid` — a tag, not a cap) earns a **whole-list NAK**; the caps negotiator's per-cap split (P5) already survives this.
+
+**Findings recorded, not engineered around**:
+- ergo deletes an **unregistered** channel (with its history) when the last member leaves — durable project history needs a one-time `/msg ChanServ REGISTER #pi-<project>` (first joiner is founder). Documented in README.
+- This ergo build stamps **no msgid on replayed lines** → an explicit `history` fetch right after boot catch-up can repeat lines; dedup is best-effort by design.
+- HistServ synthetic join/quit/topic notices ride the replay — informative, not filtered (server-specific).
+
+**Validation**: 198/198 unit tests; live two-session catch-up green; `tsc --noEmit` clean.
+
 ## Terms
 
 | Term | Meaning |
