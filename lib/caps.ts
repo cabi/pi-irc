@@ -39,6 +39,7 @@ export class CapNegotiator {
 	#offered: string[] = [];
 	#enabled: string[] = [];
 	#continuation = false;
+	#pending: string[] = []; // caps awaiting a per-cap fallback verdict
 
 	constructor(wanted: readonly string[] = SUPPORTED_CAPS) {
 		this.#wanted = [...wanted];
@@ -77,19 +78,34 @@ export class CapNegotiator {
 
 		if (sub === "ACK") {
 			if (this.#phase !== "req") return {};
-			this.#enabled = parseCapList(rest).filter((c) =>
+			const acked = parseCapList(rest).filter((c) =>
 				pickCaps(this.#offered, this.#wanted).some((w) => w.toLowerCase() === c.toLowerCase()),
 			);
+			this.#enabled.push(...acked);
+			if (this.#pending.length > 0) {
+				this.#retire(acked);
+				return this.#pending.length === 0 ? this.#finish() : { enabled: this.#enabled };
+			}
 			this.#phase = "done";
 			return { send: ["CAP END"], done: true, enabled: this.#enabled };
 		}
 
 		if (sub === "NAK") {
 			if (this.#phase !== "req") return {};
-			// All-or-nothing REQ: the whole set bounced. Nothing left to want
-			// that the server will grant — end negotiation empty-handed.
-			this.#phase = "done";
-			return { send: ["CAP END"], done: true, enabled: [] };
+			const caps = parseCapList(rest);
+			// Per-cap fallback verdict: just retire that one cap.
+			if (this.#pending.length > 0) {
+				this.#retire(caps);
+				return this.#pending.length === 0 ? this.#finish() : {};
+			}
+			// All-or-nothing batch bounce. A single-cap REQ that NAKs
+			// has nothing left to try — end empty. A multi-cap REQ gets
+			// split into one-cap REQs so one unsupported cap (seen in
+			// the wild: InspIRCd builds without some caps) no longer
+			// costs us server-time.
+			if (caps.length <= 1) return this.#finish();
+			this.#pending = caps;
+			return { send: caps.map((c) => `CAP REQ :${c}`) };
 		}
 
 		if (sub === "NEW" || sub === "DEL") return {}; // mid-session changes: not our problem
@@ -110,11 +126,24 @@ export class CapNegotiator {
 		return [...this.#enabled];
 	}
 
-	/** Reset for transport re-attach (reconnects re-run negotiation). */
+	/** Remove caps from the per-cap fallback wait list. */
+	#retire(caps: string[]): void {
+		const drop = new Set(caps.map((c) => c.toLowerCase()));
+		this.#pending = this.#pending.filter((c) => !drop.has(c.toLowerCase()));
+	}
+
+	/** Negotiation is over — emit CAP END and whatever we kept. */
+	#finish(): CapAction {
+		this.#phase = "done";
+		return { send: ["CAP END"], done: true, enabled: [...this.#enabled] };
+	}
+
+	/** Abort on 410 / pre-registration failure: stop all CAP traffic. */
 	reset(): void {
 		this.#phase = "idle";
 		this.#offered = [];
 		this.#enabled = [];
 		this.#continuation = false;
+		this.#pending = [];
 	}
 }

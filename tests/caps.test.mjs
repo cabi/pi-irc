@@ -61,11 +61,32 @@ test("negotiator: nothing offered that we want → straight to END", () => {
 	assert.deepEqual(a.enabled, []);
 });
 
-test("negotiator: NAK drops the whole REQ (all-or-nothing) and ends", () => {
-	const n = new CapNegotiator(["server-time", "extended-join"]);
+test("negotiator: batch NAK falls back to per-cap REQs (InspIRCd drill)", () => {
+	const n = new CapNegotiator(["server-time", "extended-join", "multi-prefix"]);
 	n.start();
-	n.handleCap(["*", "LS", ":server-time", "extended-join"]);
-	const a = n.handleCap(["*", "NAK", ":server-time", "extended-join"]);
+	n.handleCap(["*", "LS", ":server-time", "extended-join", "multi-prefix"]);
+	// Server hates one of the three — the whole batch bounces.
+	const a = n.handleCap(["*", "NAK", ":server-time", "extended-join", "multi-prefix"]);
+	assert.deepEqual(a.send, ["CAP REQ :server-time", "CAP REQ :extended-join", "CAP REQ :multi-prefix"]);
+	assert.ok(!a.done);
+	// Individual verdicts arrive; negotiation ends only after the last.
+	const b = n.handleCap(["*", "ACK", ":server-time"]);
+	assert.deepEqual(b.enabled, ["server-time"]);
+	assert.ok(!b.done);
+	const c = n.handleCap(["*", "NAK", ":multi-prefix"]);
+	assert.deepEqual(c.send, undefined);
+	assert.ok(!c.done);
+	const d = n.handleCap(["*", "ACK", ":extended-join"]);
+	assert.deepEqual(d.send, ["CAP END"]);
+	assert.equal(d.done, true);
+	assert.deepEqual(d.enabled, ["server-time", "extended-join"]);
+});
+
+test("negotiator: single-cap batch NAK ends empty (no fallback loop)", () => {
+	const n = new CapNegotiator(["server-time"]);
+	n.start();
+	n.handleCap(["*", "LS", ":server-time"]);
+	const a = n.handleCap(["*", "NAK", ":server-time"]);
 	assert.deepEqual(a.send, ["CAP END"]);
 	assert.equal(a.done, true);
 	assert.deepEqual(a.enabled, []);
