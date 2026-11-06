@@ -129,6 +129,12 @@ export class IrcSession extends EventEmitter {
 	#reconnectAttempt = 0;
 	#cancelKickRejoin: (() => void) | null = null;
 
+/** msgids already buffered — kills replay/live double delivery. */
+	#seenMsgIds = new Set<string>();
+	/** Serialized CHATHISTORY fetches (one in flight; later targets queue). */
+	#catchupTail: Promise<unknown> = Promise.resolve();
+	/** history.catchupLimit resolved once (fixtures may omit the section). */
+	#historyLimit = 0;
 	#nextAttemptAt: number | null = null;
 	private lastWakeAt = 0;
 	private stopped = false;
@@ -151,6 +157,7 @@ export class IrcSession extends EventEmitter {
 		this.client = client;
 		this.now = now;
 		this.#reconnect = reconnect;
+		this.#historyLimit = config.history?.catchupLimit ?? 0;
 		this.#backoff = new Backoff(reconnect?.backoff);
 		this.buffer = new MessageBuffer(config.delivery.bufferMax, client.realNick ?? client.nick);
 		this.delivery = new DeliveryQueue(
@@ -264,6 +271,15 @@ export class IrcSession extends EventEmitter {
 	#wireEvents(): void {
 		const c = this.client;
 		c.on("privmsg", (e) => {
+			// msgid dedup: replay overlap and double delivery stop here.
+			if (e.msgid) {
+				if (this.#seenMsgIds.has(e.msgid)) return;
+				this.#seenMsgIds.add(e.msgid);
+				if (this.#seenMsgIds.size > 8_000) this.#seenMsgIds.clear();
+			}
+			// Lines inside a batch are server-replayed history: buffered like
+			// live ones (so `read` shows them) but never wake anyone.
+			const replay = e.batch !== undefined;
 			// server-time: trust the server's ISO 8601 stamp when present.
 			const ts = e.time !== undefined ? Date.parse(e.time) : undefined;
 			const at = ts !== undefined && Number.isFinite(ts) ? ts : undefined;
@@ -284,7 +300,7 @@ export class IrcSession extends EventEmitter {
 						...(at ? { ts: at } : {}),
 					});
 					this.roster.touch(e.from);
-					this.#maybeWake(e.from, env.body);
+					if (!replay) this.#maybeWake(e.from, env.body);
 				} else if (env?.kind === "reply") {
 					const joined = this.#replies.add(env.id, env.part, env.body);
 					if (joined !== null && this.rpc.resolveReply(env.id, joined)) {
@@ -307,8 +323,8 @@ export class IrcSession extends EventEmitter {
 							kind: "dm",
 							...(at ? { ts: at } : {}),
 						});
-						this.roster.touch(e.from);
-						this.#maybeWake(e.from, e.text);
+					this.roster.touch(e.from);
+					if (!replay) this.#maybeWake(e.from, e.text);
 					}
 				} else {
 					// DM to us: buffer under the sender's nick, consider a wake.
@@ -320,7 +336,7 @@ export class IrcSession extends EventEmitter {
 						...(at ? { ts: at } : {}),
 					});
 					this.roster.touch(e.from);
-					this.#maybeWake(e.from, e.text);
+					if (!replay) this.#maybeWake(e.from, e.text);
 				}
 			}
 			// Our own echoes (toSelf) are already accounted for by send().
@@ -331,7 +347,12 @@ export class IrcSession extends EventEmitter {
 		});
 		c.on("join", (e) => {
 			this.channels.addMember(e.channel, e.nick);
-			this.roster.touch(e.nick, e.self ? { self: true } : {});
+		this.roster.touch(e.nick, e.self ? { self: true } : {});
+		// Self-join = fresh channel view: pull recent history in the
+		// background (no-op without draft/chathistory or with limit 0).
+		if (e.self && this.#historyLimit > 0) {
+			void this.#catchup(e.channel, this.#historyLimit);
+		}
 			// extended-join hands us the realname with the JOIN itself;
 			// only fall back to WHO when the server didn't.
 			if (!e.self && e.realname !== undefined) {
@@ -663,6 +684,36 @@ export class IrcSession extends EventEmitter {
 
 	read(opts: ReadOptions = {}): BufferedMessage[] {
 		return this.buffer.read(opts);
+	}
+
+	/** Serialized CHATHISTORY fetch; never throws, no-op without the cap. */
+	#catchup(target: string, limit: number): Promise<IrcMessage[]> {
+		const run = async (): Promise<IrcMessage[]> => {
+			const hasCap = this.client.enabledCaps.some((c) => c.toLowerCase().includes("chathistory"));
+			if (limit <= 0 || !hasCap) return [];
+			try {
+				return await this.client.chathistory(target, limit);
+			} catch {
+				return []; // history is best-effort by design
+			}
+		};
+		const p = this.#catchupTail.then(run, run);
+		this.#catchupTail = p.then(
+			() => undefined,
+			() => undefined,
+		);
+		return p;
+	}
+
+	/**
+	 * Explicit history fetch for the `history` tool op: CHATHISTORY for the
+	 * target (channel or DM peer), then drain that conversation's buffer so
+	 * the agent sees each line exactly once.
+	 */
+	async fetchHistory(target: string, limit?: number): Promise<BufferedMessage[]> {
+		const n = limit ?? (this.#historyLimit || 50);
+		await this.#catchup(target, n);
+		return this.read({ conv: target, limit: Math.max(n, 1) });
 	}
 
 	join(names: string[]): void {

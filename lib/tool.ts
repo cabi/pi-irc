@@ -19,6 +19,7 @@ export const IRC_OPS = [
 	"ask",
 	"reply",
 	"pending",
+	"history",
 	"join",
 	"part",
 	"help",
@@ -46,6 +47,7 @@ export interface IrcToolParams {
 	peer?: string;
 	/** ask: timeout in seconds (default 600, max 3600). */
 	timeout?: number;
+	/** reply: the ask id to answer (answer goes in `text`). */
 	/** reply: the ask id to answer (answer goes in `text`). */
 	id?: string;
 }
@@ -176,8 +178,19 @@ export async function executeIrcOp(
 			);
 			return text(lines.join("\n"), { inbound: inb.length, outbound: out.length });
 		}
-
-
+		case "history": {
+			const target = params.target?.trim();
+			if (!target) throw new Error("history requires target (channel or nick)");
+			const msgs = await session.fetchHistory(target, params.limit);
+			if (msgs.length === 0) {
+				return text(`no stored history for ${target} (server without chathistory, or nothing recorded)`, {
+					target,
+					count: 0,
+				});
+			}
+			const lines = msgs.map((m) => `${fmtTime(m.ts)} ${m.channel} <${m.from}> ${m.text}`);
+			return text(lines.join("\n"), { target, count: msgs.length });
+		}
 		case "join": {
 			const names = (params.channels ?? []).map((c) => c.trim()).filter(Boolean);
 			if (names.length === 0) throw new Error("join requires channels: string[]");
@@ -213,7 +226,9 @@ export async function executeIrcOp(
 				"  ask — peer + text: correlated question; blocks until their reply or timeout",
 				"  reply — id + text: answer an ask (ids shown in read/pending output)",
 				"  pending — asks waiting on you and asks you are waiting on",
-					"  join / part — channels: string[] (project channel cannot be parted)",
+				"  pending — asks waiting on you and asks you are waiting on",
+				"  history — target + limit: fetch stored channel/DM history (chathistory)",
+				"  join / part — channels: string[] (project channel cannot be parted)",
 					"",
 					"humans and other agents see your messages as normal IRC traffic;",
 					"check `read` after tool work — DMs to you are buffered until read.",

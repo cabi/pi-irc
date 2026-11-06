@@ -153,11 +153,14 @@ export default function (pi: ExtensionAPI) {
 					description:
 					"connect: ensure the link (rarely needed). status: nick/channels/unread. roster: who is here. " +
 					"send: post text (default: project channel). read: fetch unread messages. " +
+				"connect: ensure the link (rarely needed). status: nick/channels/unread. roster: who is here. " +
+					"send: post text (default: project channel). read: fetch unread messages. " +
 					"ask: peer+text correlated question (blocks for reply). reply: id+text answers an ask. " +
-					"pending: open asks both ways. join/part: extra channels. help: usage.",
+					"pending: open asks both ways. history: target (+limit) fetches stored channel/DM history " +
+					"from the server. join/part: extra channels. help: usage.",
 				}),
 				target: Type.Optional(
-					Type.String({ description: "send: channel or nick; default = project channel" }),
+					Type.String({ description: "send: channel or nick (default = project channel); history: the channel or nick to fetch" }),
 				),
 				text: Type.Optional(Type.String({ description: "send: message text" })),
 				conversation: Type.Optional(
@@ -167,7 +170,9 @@ export default function (pi: ExtensionAPI) {
 				since: Type.Optional(
 					Type.Number({ description: "read: only messages at/after this unix timestamp" }),
 				),
-				limit: Type.Optional(Type.Number({ description: "read: max messages (default 200)" })),
+				limit: Type.Optional(
+					Type.Number({ description: "read: max messages (default 200); history: max lines to fetch (default 50)" }),
+				),
 				channels: Type.Optional(
 					Type.Array(Type.String(), { description: "join/part: channel names" }),
 				),

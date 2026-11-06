@@ -54,6 +54,15 @@ export interface CapabilitiesConfig {
 	request: string[];
 }
 
+export interface HistoryConfig {
+	/**
+	 * Lines fetched per channel on join (CHATHISTORY LATEST, needs the
+	 * draft/chathistory cap). 0 disables automatic catch-up; the irc tool's
+	 * `history` op still works when the server supports it.
+	 */
+	catchupLimit: number;
+}
+
 export interface DeliveryConfig {
 	/**
 	 * Wake trust: nick globs (case-insensitive, `*` wildcard) allowed to wake
@@ -74,6 +83,7 @@ export interface PiIrcConfig {
 	channels: ChannelsConfig;
 	capabilities: CapabilitiesConfig;
 	delivery: DeliveryConfig;
+	history: HistoryConfig;
 	/** Sanitized project directory name (or explicit `slug` override). */
 	projectSlug: string;
 }
@@ -100,8 +110,11 @@ const DEFAULTS = {
 		kickRejoinDelayMs: 3_000,
 	},
 	// IRCv3 caps to request; unknown ones are answered with CAP NAK and skipped.
-	capabilities: { request: ["extended-join", "server-time", "away-notify"] as string[] },
+	capabilities: {
+		request: ["extended-join", "server-time", "away-notify", "batch", "draft/chathistory"] as string[],
+	},
 	delivery: { bufferMax: 500, wakeOnDirectMessage: true, chunkLongSends: true, wakeAllowNicks: [] as string[] },
+	history: { catchupLimit: 50 },
 };
 
 export const GLOBAL_CONFIG_FILE = "pi-irc.json";
@@ -273,7 +286,7 @@ export function loadConfig(opts: {
 
 	const slugOverride = [project.slug, global.slug].find((s) => s !== undefined);
 	const merged: Json = {};
-	for (const section of ["server", "nick", "channels", "capabilities", "delivery"] as const) {
+	for (const section of ["server", "nick", "channels", "capabilities", "delivery", "history"] as const) {
 		const g = global[section];
 		const p = project[section];
 		if (g !== undefined && (typeof g !== "object" || g === null || Array.isArray(g))) {
@@ -290,6 +303,11 @@ export function loadConfig(opts: {
 	const channels = merged.channels as Json;
 	const capabilities = merged.capabilities as Json;
 	const delivery = merged.delivery as Json;
+	const history = merged.history as Json;
+	const historyCatchup =
+		history.catchupLimit !== undefined
+			? int(history, "history.catchupLimit", history.catchupLimit, 0, 1000)
+			: DEFAULTS.history.catchupLimit;
 	const host = server.host !== undefined ? str(server, "server.host", server.host) : undefined;
 	if (host === undefined) {
 		throw new ConfigError("server.host", "required (set it in the global or project config)");
@@ -390,6 +408,7 @@ export function loadConfig(opts: {
 					? strList("delivery.wakeAllowNicks", delivery.wakeAllowNicks)
 					: DEFAULTS.delivery.wakeAllowNicks,
 		},
+		history: { catchupLimit: historyCatchup },
 		projectSlug:
 			typeof slugOverride === "string" && slugOverride.length > 0
 				? slugOverride.toLowerCase()

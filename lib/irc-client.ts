@@ -42,6 +42,9 @@ export interface ClientEvents {
 	registered: { nick: string };
 	/** IRCv3 negotiation finished — the caps the server actually enabled. */
 	capsEnabled: { caps: string[] };
+	batchStart: { ref: string; type: string; target?: string };
+	/** A batch closed — `type` empty when the open was never seen. */
+	batchEnd: { ref: string; type: string };
 	motdEnd: void;
 	message: IrcMessage;
 	notice: { from: string; text: string; toSelf: boolean };
@@ -52,6 +55,10 @@ export interface ClientEvents {
 		toSelf: boolean;
 		/** server-time tag (ISO 8601) when the server provides one. */
 		time?: string;
+		/** IRCv3 msgid tag — the wire identity of this exact message. */
+		msgid?: string;
+		/** BATCH reference when this line arrived inside a batch (replayed history). */
+		batch?: string;
 	};
 	join: {
 		nick: string;
@@ -85,7 +92,8 @@ export class IrcClient extends EventEmitter {
 	#caps = new CapNegotiator();
 	/** SASL chunks staged after "AUTHENTICATE PLAIN" (null = no exchange in flight). */
 	#saslChunks: string[] | null = null;
-
+	/** Open BATCH references → batch type ("chathistory", ...). */
+	#batches = new Map<string, string>();
 	constructor(spec: RegisterSpec, transport: Transport) {
 		super();
 		this.spec = spec;
@@ -132,6 +140,7 @@ export class IrcClient extends EventEmitter {
 		this.registeredAt = null;
 		this.#caps = new CapNegotiator(this.#wantedCaps());
 		this.#saslChunks = null;
+		this.#batches.clear();
 	}
 
 	get enabledCaps(): string[] {
@@ -190,6 +199,46 @@ export class IrcClient extends EventEmitter {
 		this.#transport.send(wire.topic(channel, topic));
 	}
 
+	/**
+	 * CHATHISTORY LATEST <target> * <limit> (draft/chathistory). Collects the
+	 * PRIVMSGs the server wraps in a matching `chathistory` batch and resolves
+	 * when the batch closes — or when the timeout hits, so servers without
+	 * proper batching can never hang a session boot. The lines also flow
+	 * through the normal `privmsg` events (buffering is the session's job).
+	 */
+	chathistory(target: string, limit: number, timeoutMs = 10_000): Promise<IrcMessage[]> {
+		return new Promise((resolve) => {
+			const collected: IrcMessage[] = [];
+			const open = new Set<string>();
+			const lower = target.toLowerCase();
+			const mine = (t: string | undefined) =>
+				t === undefined || t.toLowerCase() === lower || t.toLowerCase() === this.nick.toLowerCase();
+			const cleanup = () => {
+				clearTimeout(timer);
+				this.off("batchStart", onBatchStart);
+				this.off("batchEnd", onBatchEnd);
+				this.off("message", onMessage);
+			};
+			const done = () => {
+				cleanup();
+				resolve(collected);
+			};
+			const timer = setTimeout(done, timeoutMs);
+			const onBatchStart = (e: { ref: string; type: string; target?: string }) => {
+				if (e.type === "chathistory" && mine(e.target)) open.add(e.ref);
+			};
+			const onBatchEnd = (e: { ref: string }) => {
+				if (open.has(e.ref)) done();
+			};
+			const onMessage = (m: IrcMessage) => {
+				if (m.command === "PRIVMSG" && m.tags?.batch && open.has(m.tags.batch)) collected.push(m);
+			};
+			this.on("batchStart", onBatchStart);
+			this.on("batchEnd", onBatchEnd);
+			this.on("message", onMessage);
+			this.#transport.send(`CHATHISTORY LATEST ${target} * ${limit}`);
+		});
+	}
 	quit(reason: string): void {
 		if (this.state !== "closed") this.#transport.send(wire.quit(reason));
 		this.#transport.close();
@@ -211,6 +260,22 @@ export class IrcClient extends EventEmitter {
 			return;
 		}
 		if (msg.command === "PONG") return;
+		if (msg.command === "BATCH") {
+			// IRCv3 batches: "+ref type params" opens, "-ref" closes. Lines
+			// inside carry tag batch=ref and flow through as normal events.
+			const refArg = msg.params[0] ?? "";
+			if (refArg.startsWith("+")) {
+				const ref = refArg.slice(1);
+				this.#batches.set(ref, msg.params[1] ?? "");
+				this.emit("batchStart", { ref, type: msg.params[1] ?? "", target: msg.params[2] });
+			} else if (refArg.startsWith("-")) {
+				const ref = refArg.slice(1);
+				const type = this.#batches.get(ref) ?? "";
+				this.#batches.delete(ref);
+				this.emit("batchEnd", { ref, type });
+			}
+			return;
+		}
 		if (msg.command === "CAP") {
 			const action = this.#caps.handleCap(msg.params);
 			// With SASL configured the finish line is held back here —
@@ -250,7 +315,9 @@ export class IrcClient extends EventEmitter {
 				target,
 				text,
 				toSelf: this.isSelf(msg.sourceNick ?? ""),
-				...(msg.tags?.time ? { time: msg.tags.time } : {}),
+			...(msg.tags?.time ? { time: msg.tags.time } : {}),
+				...(msg.tags?.msgid ? { msgid: msg.tags.msgid } : {}),
+				...(msg.tags?.batch ? { batch: msg.tags.batch } : {}),
 			});
 			return;
 		}
