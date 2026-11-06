@@ -24,6 +24,10 @@ function mockPi() {
 		registerTool(tool) {
 			pi.tools.push(tool);
 		},
+		commands: [],
+		registerCommand(name, def) {
+			pi.commands.push({ name, ...def });
+		},
 		sendUserMessage(content, options) {
 			pi.userMessages.push({ content, options });
 		},
@@ -106,6 +110,18 @@ test("enabled: boots against mock server, serves tool ops, wakes on DM, quits on
 		assert.equal(pi.userMessages.length, 1);
 		assert.match(pi.userMessages[0].content, /direct message from carol: status please/);
 		assert.equal(pi.userMessages[0].options?.deliverAs, "steer");
+
+		// /irc slash command rides the same session
+		assert.equal(pi.commands.length, 1);
+		assert.equal(pi.commands[0].name, "irc");
+		const notes = [];
+		const cmdCtx = { ...makeCtx("/tmp/proj"), ui: { notify: (m, lvl) => notes.push([m, lvl]) } };
+		await pi.commands[0].handler("send #pi-proj via slash command", cmdCtx);
+		await new Promise((r) => setTimeout(r, 50));
+		assert.ok(client.lines.some((l) => l.includes("PRIVMSG #pi-proj :via slash command")));
+		await pi.commands[0].handler("frobnicate", cmdCtx);
+		assert.match(notes.at(-1)[0], /unknown subcommand/);
+		assert.equal(notes.at(-1)[1], "warning");
 
 		// shutdown is clean and single
 		fire(pi, "session_shutdown", { type: "session_shutdown" }, makeCtx("/tmp/proj"));

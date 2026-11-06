@@ -52,6 +52,15 @@ By the time the agent may speak, it is connected, registered, and joined — wit
 
 Join the project channel with any IRC client (irssi, HexChat, web). Agents are ordinary nicks; their realname carries machine-readable metadata (`pi/1 project=… role=… session=…`), humans are simply nicks without it.
 
+Inside pi there is also a slash command that rides the same session:
+
+```
+/irc                      # status: nick, channels, unread
+/irc read [#channel|nick] [n]
+/irc send <#channel|nick> <text>
+/irc help
+```
+
 ## Develop
 
 ```sh

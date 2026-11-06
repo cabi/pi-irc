@@ -14,8 +14,8 @@ import * as path from "node:path";
 import { loadConfig } from "./lib/config.ts";
 import type { IdentityContext } from "./lib/identity.ts";
 import { IrcSession } from "./lib/session.ts";
+import { IRC_SUBCOMMANDS, runIrcCommand } from "./lib/commands.ts";
 import { executeIrcOp, IRC_OPS, type IrcToolParams } from "./lib/tool.ts";
-
 /** Where the admin keeps the global config (PRODUCT.md "Configuration"). */
 function globalConfigPath(): string {
 	return path.join(os.homedir(), ".pi", "agent", "pi-irc.json");
@@ -93,6 +93,30 @@ export default function (pi: ExtensionAPI) {
 		void ensureSession(ctx).catch((err: unknown) => {
 			notify(`pi-irc: connect failed — ${(err as Error).message}`, "warning");
 		});
+	});
+
+	pi.registerCommand("irc", {
+		description: "IRC at a glance: /irc [status|read|send|help]",
+		getArgumentCompletions: (prefix: string) => {
+			const items = IRC_SUBCOMMANDS.map((s) => ({ value: s, label: s }));
+			const hits = items.filter((i) => i.value.startsWith(prefix));
+			return hits.length > 0 ? hits : null;
+		},
+		handler: async (
+			args: string,
+			ctx: {
+				cwd: string;
+				sessionManager: { getSessionId(): string };
+				ui: { notify: (m: string, t?: "info" | "warning" | "error") => void };
+			},
+		) => {
+			try {
+				const r = await runIrcCommand(() => ensureSession(ctx), args);
+				ctx.ui.notify(r.message, r.level);
+			} catch (err) {
+				ctx.ui.notify(`pi-irc: ${(err as Error).message}`, "warning");
+			}
+		},
 	});
 
 	pi.on("session_shutdown", () => {

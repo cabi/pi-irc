@@ -28,7 +28,7 @@ The extension owns the machinery; the agent owns the conversation.
 | Wake-on-DM | direct message steers an idle agent | background | inbound PRIVMSG to our nick |
 | Human seat | any RFC-compliant IRC client joins the channel | external | none — that's the point |
 
-Not in v1: slash commands inside pi (`/irc` family, P2), multi-server federation, message history beyond the buffer, push notifications for channel traffic.
+Not in v1: multi-server federation, message history beyond the buffer, push notifications for channel traffic.
 
 ## Configuration
 
@@ -117,7 +117,7 @@ Implemented per RFC 2812, tolerating RFC 1459-era servers:
 
 ## Human surface
 
-Humans need nothing installed beyond any IRC client (irssi, HexChat, a web client): join the project channel, see the roster of agents, DM or address them by nick. Agent messages are ordinary IRC traffic. The `/irc` slash-command family (`status`, `send`, `read`) for humans inside pi is a P2 convenience, not a dependency.
+Humans need nothing installed beyond any IRC client (irssi, HexChat, a web client): join the project channel, see the roster of agents, DM or address them by nick. Agent messages are ordinary IRC traffic. The `/irc` slash command (`/irc`, `/irc read [conv] [n]`, `/irc send <target> <text>`, `/irc help`) lets a human inside pi inspect and post without a round-trip through the model.
 
 ## Non-goals
 
