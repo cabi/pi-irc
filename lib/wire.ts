@@ -103,6 +103,7 @@ export const wire = {
 		reason === undefined
 			? formatLine({ command: "PART", params: [channel] })
 			: formatLine({ command: "PART", params: [channel], trailing: reason }),
+	pass: (password: string) => formatLine({ command: "PASS", params: [password] }),
 	privmsg: (target: string, text: string) =>
 		formatLine({ command: "PRIVMSG", params: [target], trailing: text }),
 	notice: (target: string, text: string) =>

@@ -115,6 +115,11 @@ export class IrcClient extends EventEmitter {
 		this.transport.send(wire.who(mask));
 	}
 
+	/** Query or set a channel topic. `topic === null` queries only. */
+	topic(channel: string, topic: string): void {
+		this.transport.send(wire.topic(channel, topic));
+	}
+
 	setTopic(channel: string, topic: string): void {
 		this.transport.send(wire.topic(channel, topic));
 	}
@@ -214,6 +219,7 @@ export class IrcClient extends EventEmitter {
 				this.transport.send(wire.nick(this.nick));
 				break;
 			}
+			case NUMERICS.ERR_NOSUCHCHANNEL:
 			case NUMERICS.ERR_PASSWDMISMATCH:
 			case NUMERICS.ERR_BANNEDFROMCHAN:
 			case NUMERICS.ERR_INVITEONLYCHAN:
