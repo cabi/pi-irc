@@ -137,3 +137,54 @@ test("projectSlug sanitizes directory names", () => {
 test("renderChannelName joins slug into template", () => {
 	assert.equal(renderChannelName("#pi-{slug}", "demo"), "#pi-demo");
 });
+
+function writeRawConfig(dir, name, text) {
+	const file = path.join(dir, name);
+	fs.mkdirSync(path.dirname(file), { recursive: true });
+	fs.writeFileSync(file, text);
+	return file;
+}
+
+test("jsonc tolerated: trailing commas and // comments in configs", () => {
+	const dir = tmpDir();
+	const globalPath = writeRawConfig(
+		dir,
+		"global.json",
+		`{
+			// Carsten's local InspIRCd
+			"server": {
+				"host": "localhost",
+				"port": 6667,
+				"tls": false,
+			},
+			"nick": { "template": "pi-//not-a-comment" },
+		}`,
+	);
+	const cfg = loadConfig({ globalPath, projectDir: dir });
+	assert.equal(cfg.server.host, "localhost");
+	assert.equal(cfg.server.port, 6667);
+	assert.equal(cfg.server.tls, false);
+	assert.equal(cfg.nick.template, "pi-//not-a-comment");
+});
+
+test("jsonc tolerated: block comments and trailing comma in arrays", () => {
+	const dir = tmpDir();
+	const globalPath = writeRawConfig(
+		dir,
+		"global.json",
+		`{
+			"server": { "host": "h", "port": 6697, "tls": true },
+			"channels": {
+				"defaults": ["#ops", "#lounge",],
+			}, /* block comment */
+		}`,
+	);
+	const cfg = loadConfig({ globalPath, projectDir: dir });
+	assert.deepEqual(cfg.channels.defaults, ["#ops", "#lounge"]);
+});
+
+test("genuinely broken configs still fail loudly", () => {
+	const dir = tmpDir();
+	const globalPath = writeRawConfig(dir, "global.json", `{ "server": { "host": `);
+	expectConfigError(() => loadConfig({ globalPath, projectDir: dir }), "global config");
+});
