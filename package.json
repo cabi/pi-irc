@@ -1,14 +1,30 @@
 {
   "name": "pi-irc",
   "version": "0.1.0",
-  "private": true,
   "description": "IRC as the communication bus for pi agents and humans: RFC 2812 client-side implementation with background bootstrap, roster, and one lean `irc` tool",
   "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "pi",
+    "pi-extension",
+    "irc",
+    "rfc2812",
+    "agent-communication",
+    "coding-agent"
+  ],
   "engines": {
     "node": ">=20"
   },
+  "files": [
+    "index.ts",
+    "lib/",
+    "docs/example.pi-irc.json",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "typecheck": "tsc --noEmit"
   },
   "pi": {
     "extensions": [
