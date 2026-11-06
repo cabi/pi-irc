@@ -56,7 +56,7 @@ export class MockIrcServer extends net.Server {
 				break;
 			}
 			case "USER":
-				client.user = trailing?.slice(1) ?? "user";
+				client.user = trailing ?? "user";
 				if (client.nick) this.#welcome(client);
 				break;
 			case "JOIN": {
