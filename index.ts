@@ -51,12 +51,6 @@ export default function (pi: ExtensionAPI) {
 		return;
 	}
 
-	// Falsification finding (headless run, scratch dir): ctx.cwd for a
-	// globally discovered extension points at the extension FILE's
-	// location (the shim's realpath), not the session's project. The
-	// channel slug must follow the process working directory — the
-	// directory the human started pi in.
-	const projectCwd = process.cwd();
 	let booting: Promise<IrcSession> | null = null;
 	let session: IrcSession | null = null;
 	let lastSessionId = "";
@@ -68,7 +62,7 @@ export default function (pi: ExtensionAPI) {
 		if (session && sid === lastSessionId) return Promise.resolve(session);
 		if (booting && sid === lastSessionId) return booting;
 		lastSessionId = sid;
-		booting = IrcSession.connect(config, identityFrom(projectCwd, sid))
+		booting = IrcSession.connect(config, identityFrom(ctx.cwd, sid))
 			.then((s) => {
 				session = s;
 				// DM-wake: steer this session with the buffered DM so the
