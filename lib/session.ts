@@ -81,6 +81,7 @@ export class IrcSession extends EventEmitter {
 	readonly #backoff: Backoff;
 	#cancelScheduled: (() => void) | null = null;
 	#reconnectAttempt = 0;
+	#cancelKickRejoin: (() => void) | null = null;
 	#nextAttemptAt: number | null = null;
 	private lastWakeAt = 0;
 	private stopped = false;
@@ -247,11 +248,12 @@ export class IrcSession extends EventEmitter {
 				this.client.who(e.nick); // learn realname of the newcomer
 			}
 		});
-		c.on("away", (e) => this.roster.touch(e.nick));
 		c.on("part", (e) => {
 			if (e.self) this.channels.part(e.channel);
 			else this.channels.removeMember(e.channel, e.nick);
 		});
+		c.on("away", (e) => this.roster.touch(e.nick));
+		c.on("kick", (e) => this.#handleKick(e));
 		c.on("quit", (e) => {
 			this.channels.removeMemberEverywhere(e.nick);
 			this.roster.forget(e.nick);
@@ -347,6 +349,35 @@ export class IrcSession extends EventEmitter {
 		this.delivery.resume(); // unpause and flush whatever queued while down
 	}
 
+	/**
+	 * A self-kick is an involuntary PART: drop membership now, leave one
+	 * system line in the channel buffer (the agent sees why on next read),
+	 * and rejoin after `channels.kickRejoinDelayMs` — 0 stays out. Someone
+	 * else getting kicked only updates our membership view.
+	 */
+	#handleKick(e: { nick: string; by: string; channel: string; reason: string; self: boolean }): void {
+		if (!e.self) {
+			this.channels.removeMember(e.channel, e.nick);
+			return;
+		}
+		this.channels.part(e.channel);
+		this.buffer.push({
+			conv: e.channel,
+			from: e.by,
+			text: `kicked by ${e.by}${e.reason ? `: ${e.reason}` : ""} — rejoining`,
+			kind: "system",
+		});
+		this.emit("kicked", { channel: e.channel, by: e.by, reason: e.reason });
+		this.#cancelKickRejoin?.();
+		this.#cancelKickRejoin = null;
+		const delay = this.config.channels.kickRejoinDelayMs;
+		if (delay <= 0 || this.stopped) return;
+		this.#cancelKickRejoin = defaultSchedule(() => {
+			this.#cancelKickRejoin = null;
+			if (this.stopped) return;
+			this.client.join([e.channel]);
+		}, delay);
+	}
 	#applyNumeric(m: { command: string; params: string[] }): void {
 		const p = m.params;
 		switch (m.command) {
@@ -453,6 +484,8 @@ export class IrcSession extends EventEmitter {
 		this.stopped = true;
 		this.#cancelScheduled?.();
 		this.#cancelScheduled = null;
+		this.#cancelKickRejoin?.();
+		this.#cancelKickRejoin = null;
 		this.delivery.stop();
 		try {
 			this.client.quit(reason);

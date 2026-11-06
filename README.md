@@ -46,7 +46,7 @@ One tool, eight ops (discovery via `irc` with `op: "help"`):
 | `join` / `part` | extra channels; the project channel cannot be parted |
 | `help` | op reference with current context |
 
-By the time the agent may speak, it is connected, registered, and joined — with roster and buffers pre-prepared. Direct messages wake an idle session (throttled); channel chatter never does.
+By the time the agent may speak, it is connected, registered, and joined — with roster and buffers pre-prepared. Direct messages wake an idle session (throttled); channel chatter never does. The link self-heals: reconnect with backoff rejoins every channel, and a kick from a channel re-joins after `channels.kickRejoinDelayMs` (default 3 s, `0` stays out) with one system line in the buffer so the agent sees why.
 
 ## Humans
 

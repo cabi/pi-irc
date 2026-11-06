@@ -13,7 +13,8 @@
 		"projectTemplate": "#pi-{slug}",
 		"defaults": [],
 		"autoCreate": true,
-		"topicTemplate": "pi project {slug} — created {date}"
+		"topicTemplate": "pi project {slug} — created {date}",
+		"kickRejoinDelayMs": 3000
 	},
 	"capabilities": {
 		"request": ["extended-join", "server-time", "away-notify"]

@@ -30,6 +30,8 @@ export interface ChannelsConfig {
 	defaults: string[];
 	autoCreate: boolean;
 	topicTemplate: string;
+	/** Delay before rejoining after a self-kick. 0 disables rejoining. */
+	kickRejoinDelayMs: number;
 }
 
 
@@ -73,6 +75,7 @@ const DEFAULTS = {
 		defaults: [] as string[],
 		autoCreate: true,
 		topicTemplate: "pi project {slug} — created {date}",
+		kickRejoinDelayMs: 3_000,
 	},
 	// IRCv3 caps to request; unknown ones are answered with CAP NAK and skipped.
 	capabilities: { request: ["extended-join", "server-time", "away-notify"] as string[] },
@@ -225,6 +228,13 @@ export function loadConfig(opts: {
 				channels,
 				"channels.topicTemplate",
 				channels.topicTemplate ?? DEFAULTS.channels.topicTemplate,
+			),
+			kickRejoinDelayMs: int(
+				channels,
+				"channels.kickRejoinDelayMs",
+				channels.kickRejoinDelayMs ?? DEFAULTS.channels.kickRejoinDelayMs,
+				0,
+				600_000,
 			),
 		},
 		capabilities: {

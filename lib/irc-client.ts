@@ -264,6 +264,19 @@ export class IrcClient extends EventEmitter {
 			this.emit("quit", { nick: msg.sourceNick ?? "?", reason: msg.params.join(" ") });
 			return;
 		}
+		if (msg.command === "KICK") {
+			// <channel> <user> [:comment]
+			const channel = msg.params[0];
+			const nick = msg.params[1] ?? "?";
+			this.emit("kick", {
+				nick,
+				by: msg.sourceNick ?? "?",
+				channel,
+				reason: msg.params.slice(2).join(" "),
+				self: this.isSelf(nick),
+			});
+			return;
+		}
 		if (msg.command === "NICK") {
 			const newNick = msg.params[0];
 			const self = this.isSelf(msg.sourceNick ?? "");
