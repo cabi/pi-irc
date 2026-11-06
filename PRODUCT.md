@@ -54,6 +54,8 @@ pi-irc owns its configuration file(s), layered and merged (project over global):
     "defaults": [],                  // extra channels every agent joins (e.g. "#pi-lobby")
     "autoCreate": true,              // implicit via first JOIN; stamps topic on creation
     "topicTemplate": "pi project {slug} — created {date}"
+  "capabilities": {
+    "request": ["extended-join", "server-time", "away-notify"]  // IRCv3; unknown caps are NAK'd and skipped
   },
   "delivery": {
     "bufferMax": 500,               // ring buffer size per conversation
@@ -165,7 +167,7 @@ pi-irc/
 
 - **P0 (done)** product definition, glossary, ADRs (docs/decisions/)
 - **P1 (done)** core: config, wire/transport/client, session bootstrap, identity, channel bootstrap, roster, buffer, delivery — `irc` tool with all 8 ops; wake-on-DM and the flood limiter shipped here, ahead of plan; 97 tests
-- **P2** robustness: reconnect with backoff + rejoin, IRCv3 caps (server-time, extended-join, multi-prefix), `/irc` slash commands
+- **P2 (done)** robustness: reconnect with backoff + rejoin (107 tests), IRCv3 capabilities — server-time, extended-join, away-notify negotiated via `capabilities.request`; RFC-2812-only servers degrade silently (410 abort); 126 tests
 - **P3** ergo live container test + validation run (two agents + one human coordinating through IRC only)
 - **P4** hardening, packaging prep (npm package only after the design is falsified)
 ## Terms

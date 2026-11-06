@@ -11,6 +11,7 @@
 import { EventEmitter } from "node:events";
 import { parseLine, wire, type IrcMessage } from "./wire.ts";
 import { NUMERICS } from "./numerics.ts";
+import { CapNegotiator } from "./caps.ts";
 
 export type ClientState = "idle" | "connecting" | "registering" | "registered" | "closed";
 
@@ -30,15 +31,34 @@ export interface RegisterSpec {
 	nickFallbacks?: string[];
 	/** Ping timeout watchdog in ms (default 120000). */
 	pingTimeoutMs?: number;
+	/** IRCv3 caps to negotiate before registration ([] or omit = skip CAP). */
+	caps?: string[];
 }
 
 export interface ClientEvents {
 	registered: { nick: string };
+	/** IRCv3 negotiation finished — the caps the server actually enabled. */
+	capsEnabled: { caps: string[] };
 	motdEnd: void;
 	message: IrcMessage;
 	notice: { from: string; text: string; toSelf: boolean };
-	privmsg: { from: string; target: string; text: string; toSelf: boolean };
-	join: { nick: string; channel: string; self: boolean };
+	privmsg: {
+		from: string;
+		target: string;
+		text: string;
+		toSelf: boolean;
+		/** server-time tag (ISO 8601) when the server provides one. */
+		time?: string;
+	};
+	join: {
+		nick: string;
+		channel: string;
+		self: boolean;
+		/** extended-join extras: account ("*" when logged out) and realname. */
+		account?: string;
+		realname?: string;
+	};
+	away: { nick: string; away: boolean };
 	part: { nick: string; channel: string; self: boolean };
 	quit: { nick: string; reason: string };
 	nickChange: { oldNick: string; newNick: string; self: boolean };
@@ -56,15 +76,17 @@ export class IrcClient extends EventEmitter {
 	private registeredAt: number | null = null;
 	#tHandlers: { line: (l: string) => void; close: () => void; error: (e: Error) => void } | null = null;
 	private lastServerLineAt = Date.now();
-	private watchdog: ReturnType<typeof setInterval> | null = null;
 	private fallbackIdx = 0;
 	private currentNickBase: string;
+	private watchdog: ReturnType<typeof setInterval> | null = null;
+	#caps = new CapNegotiator();
 
 	constructor(spec: RegisterSpec, transport: Transport) {
 		super();
 		this.spec = spec;
 		this.nick = spec.nick;
 		this.currentNickBase = spec.nick;
+		this.#caps = new CapNegotiator(spec.caps ?? []);
 		this.#bindTransport(transport);
 	}
 
@@ -103,11 +125,19 @@ export class IrcClient extends EventEmitter {
 		this.currentNickBase = this.spec.nick;
 		this.fallbackIdx = 0;
 		this.registeredAt = null;
+		this.#caps = new CapNegotiator(this.spec.caps ?? []);
+	}
+
+	get enabledCaps(): string[] {
+		return this.#caps.enabled;
 	}
 
 	/** Begin registration on an already-connected transport. */
 	startRegistration(): void {
 		this.state = "registering";
+		// IRCv3: CAP LS goes out before NICK/USER; CAP END follows the ACK,
+		// which releases the server to send 001.
+		for (const line of this.#caps.start()) this.#transport.send(line);
 		this.#transport.send(wire.nick(this.nick));
 		this.#transport.send(wire.user(this.spec.username, this.spec.realname));
 		this.#startWatchdog();
@@ -175,6 +205,17 @@ export class IrcClient extends EventEmitter {
 			return;
 		}
 		if (msg.command === "PONG") return;
+		if (msg.command === "CAP") {
+			const action = this.#caps.handleCap(msg.params);
+			for (const line of action.send ?? []) this.#transport.send(line);
+			if (action.done) this.emit("capsEnabled", { caps: this.#caps.enabled });
+			return;
+		}
+		if (msg.command === "AWAY") {
+			// away-notify: params empty → back, [":reason"] → away.
+			this.emit("away", { nick: msg.sourceNick ?? "?", away: msg.params.length > 0 });
+			return;
+		}
 		if (msg.command === "ERROR") {
 			// "ERROR :Closing Link: ..." — the server is hanging up on us.
 			this.emit("error", { message: msg.params.join(" ") });
@@ -189,6 +230,7 @@ export class IrcClient extends EventEmitter {
 				target,
 				text,
 				toSelf: this.isSelf(msg.sourceNick ?? ""),
+				...(msg.tags?.time ? { time: msg.tags.time } : {}),
 			});
 			return;
 		}
@@ -202,8 +244,15 @@ export class IrcClient extends EventEmitter {
 			return;
 		}
 		if (msg.command === "JOIN") {
-			const channel = msg.params[0];
-			this.emit("join", { nick: msg.sourceNick ?? "?", channel, self: this.isSelf(msg.sourceNick ?? "") });
+			// RFC 2812: JOIN <channel>. extended-join: JOIN <channel> <account> <realname>.
+			const [channel, account, realname] = msg.params;
+			this.emit("join", {
+				nick: msg.sourceNick ?? "?",
+				channel,
+				self: this.isSelf(msg.sourceNick ?? ""),
+				...(account !== undefined ? { account } : {}),
+				...(realname !== undefined ? { realname } : {}),
+			});
 			return;
 		}
 		if (msg.command === "PART") {
@@ -236,6 +285,14 @@ export class IrcClient extends EventEmitter {
 				this.state = "registered";
 				this.registeredAt = Date.now();
 				this.emit("registered", { nick: this.nick });
+				break;
+			case NUMERICS.ERR_INVALIDCAPCMD:
+				// RFC 2812-only server that doesn't know CAP: drop the
+				// negotiation silently and let registration finish.
+				if (this.#caps.phase !== "done") {
+					this.#caps.abort();
+					this.emit("capsEnabled", { caps: [] });
+				}
 				break;
 			case NUMERICS.ERR_NICKNAMEINUSE:
 			case NUMERICS.ERR_ERRONEUSNICKNAME: {

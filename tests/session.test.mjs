@@ -89,6 +89,7 @@ function makeConfig(over = {}) {
 		server: { host: "irc.example", port: 6667, tls: false },
 		nick: { template: "pi-{role}-{short}", maxLen: 30 },
 		channels: { projectTemplate: "#pi-{slug}", defaults: [], autoCreate: true, topicTemplate: "pi {slug} — {date}", ...over },
+		capabilities: { request: [] },
 		delivery: { bufferMax: 50, wakeOnDirectMessage: true, chunkLongSends: true },
 		projectSlug: "proj",
 	};

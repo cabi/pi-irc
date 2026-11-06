@@ -25,6 +25,7 @@ function makeConfig(port, over = {}) {
 			topicTemplate: "pi {slug} — {date}",
 			...over,
 		},
+		capabilities: { request: [] },
 		delivery: { bufferMax: 50, wakeOnDirectMessage: true, chunkLongSends: true },
 		projectSlug: "proj",
 	};

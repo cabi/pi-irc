@@ -15,6 +15,9 @@
 		"autoCreate": true,
 		"topicTemplate": "pi project {slug} — created {date}"
 	},
+	"capabilities": {
+		"request": ["extended-join", "server-time", "away-notify"]
+	},
 	"delivery": {
 		"bufferMax": 500,
 		"wakeOnDirectMessage": true,

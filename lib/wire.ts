@@ -17,26 +17,49 @@ export interface IrcMessage {
 	command: string;
 	/** Uppercased command or numeric as string ("001", "PRIVMSG"). */
 	params: string[];
+	/** IRCv3 message tags, parsed and unescaped ("@time=...;account=x"). */
+	tags?: Record<string, string>;
 }
 
 const MAX_LINE = 512;
 
 export class WireError extends Error {}
 
-/** Parse one protocol line (without CRLF). Throws WireError on junk. */
+/** Parse and unescape an IRCv3 tags block ("time=..;msg-things=a\\sb"). */
+export function parseTags(raw: string): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const entry of raw.split(";")) {
+		if (entry === "") continue;
+		const eq = entry.indexOf("=");
+		const key = eq === -1 ? entry : entry.slice(0, eq);
+		if (eq === -1) {
+			out[key] = "";
+			continue;
+		}
+		out[key] = entry
+			.slice(eq + 1)
+			.replace(/\\(.)/g, (_, ch: string) => {
+				// IRCv3 tag escaping: \: = ";", \s = space, \\, \r, \n literal.
+				if (ch === ":") return ";";
+				if (ch === "s") return " ";
+				if (ch === "r") return "\r";
+				if (ch === "n") return "\n";
+				return ch; // unknown escape: drop the backslash
+			});
+	}
+	return out;
+}
 export function parseLine(line: string): IrcMessage {
 	let rest = line;
 	if (rest.length > MAX_LINE) rest = rest.slice(0, MAX_LINE);
 
-	let tags: string | undefined;
+	let tags: Record<string, string> | undefined;
 	if (rest.startsWith("@")) {
 		const sp = rest.indexOf(" ");
 		if (sp === -1) throw new WireError("line is only a tags block");
-		tags = rest.slice(1, sp);
+		tags = parseTags(rest.slice(1, sp));
 		rest = rest.slice(sp + 1);
 	}
-	void tags; // parsed off for tolerance, unused until CAP is negotiated
-
 	let prefix: string | undefined;
 	if (rest.startsWith(":")) {
 		const sp = rest.indexOf(" ");
@@ -65,6 +88,7 @@ export function parseLine(line: string): IrcMessage {
 
 	const sourceNick = prefix?.includes("!") ? prefix.slice(0, prefix.indexOf("!")) : undefined;
 	return {
+		...(tags ? { tags } : {}),
 		prefix,
 		sourceNick,
 		command: /^\d{3}$/.test(command) ? command : command.toUpperCase(),

@@ -32,6 +32,12 @@ export interface ChannelsConfig {
 	topicTemplate: string;
 }
 
+
+export interface CapabilitiesConfig {
+	/** IRCv3 capabilities to request during registration. */
+	request: string[];
+}
+
 export interface DeliveryConfig {
 	bufferMax: number;
 	wakeOnDirectMessage: boolean;
@@ -42,6 +48,7 @@ export interface PiIrcConfig {
 	server: ServerConfig;
 	nick: NickConfig;
 	channels: ChannelsConfig;
+	capabilities: CapabilitiesConfig;
 	delivery: DeliveryConfig;
 	/** Sanitized project directory name (or explicit `slug` override). */
 	projectSlug: string;
@@ -67,6 +74,8 @@ const DEFAULTS = {
 		autoCreate: true,
 		topicTemplate: "pi project {slug} — created {date}",
 	},
+	// IRCv3 caps to request; unknown ones are answered with CAP NAK and skipped.
+	capabilities: { request: ["extended-join", "server-time", "away-notify"] as string[] },
 	delivery: { bufferMax: 500, wakeOnDirectMessage: true, chunkLongSends: true },
 };
 
@@ -136,6 +145,11 @@ function channelList(key: string, value: unknown): string[] {
 	});
 }
 
+/** List of plain non-empty strings, no channel-name syntax imposed. */
+function strList(key: string, value: unknown): string[] {
+	if (!Array.isArray(value)) throw new ConfigError(key, "expected an array of strings");
+	return value.map((v, i) => str({} as Json, `${key}[${i}]`, v));
+}
 /**
  * Loads and validates the merged configuration.
  * Returns `null` when the global config file does not exist (extension disabled).
@@ -159,7 +173,7 @@ export function loadConfig(opts: {
 
 	const slugOverride = [project.slug, global.slug].find((s) => s !== undefined);
 	const merged: Json = {};
-	for (const section of ["server", "nick", "channels", "delivery"] as const) {
+	for (const section of ["server", "nick", "channels", "capabilities", "delivery"] as const) {
 		const g = global[section];
 		const p = project[section];
 		if (g !== undefined && (typeof g !== "object" || g === null || Array.isArray(g))) {
@@ -174,8 +188,8 @@ export function loadConfig(opts: {
 	const server = merged.server as Json;
 	const nick = merged.nick as Json;
 	const channels = merged.channels as Json;
+	const capabilities = merged.capabilities as Json;
 	const delivery = merged.delivery as Json;
-
 	const host = server.host !== undefined ? str(server, "server.host", server.host) : undefined;
 	if (host === undefined) {
 		throw new ConfigError("server.host", "required (set it in the global or project config)");
@@ -212,6 +226,11 @@ export function loadConfig(opts: {
 				"channels.topicTemplate",
 				channels.topicTemplate ?? DEFAULTS.channels.topicTemplate,
 			),
+		},
+		capabilities: {
+			request: capabilities.request !== undefined
+				? strList("capabilities.request", capabilities.request)
+				: DEFAULTS.capabilities.request,
 		},
 		delivery: {
 			bufferMax: int(

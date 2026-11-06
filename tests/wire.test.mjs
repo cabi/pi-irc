@@ -40,10 +40,17 @@ test("lowercase commands are uppercased; numerics stay strings", () => {
 	assert.equal(parseLine(":s 005 me PING=1 :are supported").command, "005");
 });
 
-test("ircv3 tags prefix is tolerated and skipped", () => {
+test("ircv3 tags: parsed, unescaped, and carried on the message", () => {
 	const m = parseLine("@time=2024-01-01T00:00:00Z :nick!u@h PRIVMSG #c :hi");
 	assert.equal(m.command, "PRIVMSG");
 	assert.equal(m.params[1], "hi");
+	assert.equal(m.tags?.time, "2024-01-01T00:00:00Z");
+	// IRCv3 tag value escaping: \: = ";", \s = space, unknown drops the backslash.
+	const e = parseLine("@msg=a\\:b\\sc\\\\d\\xe :n PRIVMSG #c :t");
+	assert.equal(e.tags?.msg, 'a;b c\\dxe');
+	// Bare tag (no =) reads as empty string.
+	const b = parseLine("@draft :n PRIVMSG #c :t");
+	assert.equal(b.tags?.draft, "");
 });
 
 test("junk lines throw WireError, not TypeError", () => {

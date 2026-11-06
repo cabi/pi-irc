@@ -14,6 +14,8 @@ export class MockIrcServer extends net.Server {
 		/** Test hook: reject the first NICK with 433 (nick collision drill). */
 		this.rejectFirstNick = false;
 		this.rejectedOnce = new Set();
+		/** IRCv3 capabilities the server advertises (answer to CAP LS). */
+		this.caps = ["extended-join", "server-time", "away-notify", "multi-prefix"];
 	}
 
 	#onConnection(socket) {
@@ -55,6 +57,22 @@ export class MockIrcServer extends net.Server {
 				if (client.user) this.#welcome(client); // registration completes
 				break;
 			}
+			case "CAP": {
+				client.sawCap = true;
+				const sub = (params[0] ?? "").toUpperCase();
+				if (sub === "LS") {
+					this.#send(client, `:mock CAP * LS :${this.caps.join(" ")}`);
+				} else if (sub === "REQ") {
+					const list = (trailing ?? params.slice(1).join(" ")).split(" ").filter(Boolean);
+					const ok = list.every((c) => this.caps.includes(c));
+					this.#send(client, `:mock CAP * ${ok ? "ACK" : "NAK"} :${list.join(" ")}`);
+					if (ok) (client.caps ??= []).push(...list);
+				} else if (sub === "END") {
+					client.capEnded = true;
+					if (client.nick && client.user) this.#welcome(client);
+				}
+				break;
+			}
 			case "USER":
 				client.user = trailing ?? "user";
 				if (client.nick) this.#welcome(client);
@@ -87,6 +105,8 @@ export class MockIrcServer extends net.Server {
 
 	#welcome(client) {
 		if (client.welcomed) return;
+		// IRCv3: with CAP negotiation in flight, 001 waits for CAP END.
+		if (client.sawCap && !client.capEnded) return;
 		client.welcomed = true;
 		this.#send(client, `:mock 001 ${client.nick} :Welcome to the mock server`);
 		this.#send(client, `:mock 002 ${client.nick} :Your host is mock`);

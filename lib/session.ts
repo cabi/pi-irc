@@ -138,6 +138,7 @@ export class IrcSession extends EventEmitter {
 					realname: reg.realname,
 					nickFallbacks: reg.nickFallbacks,
 					pingTimeoutMs: 60_000,
+					caps: config.capabilities.request,
 				},
 				transport,
 			);
@@ -202,13 +203,22 @@ export class IrcSession extends EventEmitter {
 	#wireEvents(): void {
 		const c = this.client;
 		c.on("privmsg", (e) => {
+			// server-time: trust the server's ISO 8601 stamp when present.
+			const ts = e.time !== undefined ? Date.parse(e.time) : undefined;
+			const at = ts !== undefined && Number.isFinite(ts) ? ts : undefined;
 			if (/^[#&+!]/.test(e.target)) {
 				// Channel chatter: buffer under the channel, never wake.
-				this.buffer.push({ conv: e.target, from: e.from, text: e.text });
+				this.buffer.push({ conv: e.target, from: e.from, text: e.text, ...(at ? { ts: at } : {}) });
 				this.roster.touch(e.from);
 			} else if (!e.toSelf) {
 				// DM to us: buffer under the sender's nick, consider a wake.
-				this.buffer.push({ conv: e.from, from: e.from, text: e.text, kind: "dm" });
+				this.buffer.push({
+					conv: e.from,
+					from: e.from,
+					text: e.text,
+					kind: "dm",
+					...(at ? { ts: at } : {}),
+				});
 				this.roster.touch(e.from);
 				this.#maybeWake(e.from, e.text);
 			}
@@ -221,8 +231,15 @@ export class IrcSession extends EventEmitter {
 		c.on("join", (e) => {
 			this.channels.addMember(e.channel, e.nick);
 			this.roster.touch(e.nick, e.self ? { self: true } : {});
-			if (!e.self) this.client.who(e.nick); // learn realname of the newcomer
+			// extended-join hands us the realname with the JOIN itself;
+			// only fall back to WHO when the server didn't.
+			if (!e.self && e.realname !== undefined) {
+				this.roster.applyRealname(e.nick, e.realname);
+			} else if (!e.self) {
+				this.client.who(e.nick); // learn realname of the newcomer
+			}
 		});
+		c.on("away", (e) => this.roster.touch(e.nick));
 		c.on("part", (e) => {
 			if (e.self) this.channels.part(e.channel);
 			else this.channels.removeMember(e.channel, e.nick);
