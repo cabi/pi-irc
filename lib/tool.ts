@@ -152,6 +152,9 @@ export async function executeIrcOp(
 			if (res.status === "replied") {
 				return text(`${params.peer} replied: ${res.reply}`, res as unknown as Record<string, unknown>);
 			}
+			if (res.status === "disposed") {
+				return text(`ask aborted — session stopped before ${params.peer} answered`, res as unknown as Record<string, unknown>);
+			}
 			return text(
 				`no answer from ${params.peer} within ${Math.round(res.timeoutMs / 1000)}s — the ask is still visible to them; retry or send directly`,
 				res as unknown as Record<string, unknown>,

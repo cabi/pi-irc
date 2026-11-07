@@ -24,7 +24,10 @@ export interface DeliveryOptions {
 	/** Max length per chunk when chunking is on. */
 	maxChunk?: number;
 	/** Chunk messages longer than maxChunk (delivery.chunkLongSends). */
+	/** Chunk messages longer than maxChunk (delivery.chunkLongSends). */
 	chunkLong?: boolean;
+	/** Upper bound on queued chunks; enqueue beyond it throws (backpressure). */
+	maxQueue?: number;
 }
 
 export interface OutboundChunk {
@@ -118,17 +121,27 @@ export class DeliveryQueue {
 			intervalMs: 2000,
 			maxChunk: 400,
 			chunkLong: true,
+			maxQueue: 512,
 		},
 	) {
 		this.tokens = this.opts.burst;
 	}
-	/** Queue a message; returns the number of chunks it was split into. */
+	/** Queue a message; returns the number of chunks it was split into.
+	 * Throws when the queue is at maxQueue chunks — backpressure surfaces to
+	 * the caller instead of unbounded memory growth. */
 	enqueue(target: string, text: string): number {
+		const queued = this.pending() + 1; // ≥1 chunk for this item after split
 		if (this.opts.chunkLong) {
 			const chunks = chunkText(text, this.opts.maxChunk);
+			if (this.pending() + chunks.length > this.opts.maxQueue) {
+				throw new Error(`delivery queue full (${this.pending()} chunks queued, max ${this.opts.maxQueue})`);
+			}
 			const n = chunks.length;
 			this.queue.push({ target, chunks, part: n > 1 ? { i: 0, n } : null, nextIndex: 0 });
 			return n;
+		}
+		if (queued > this.opts.maxQueue) {
+			throw new Error(`delivery queue full (${this.pending()} chunks queued, max ${this.opts.maxQueue})`);
 		}
 		this.queue.push({ target, chunks: [text], part: null, nextIndex: 0 });
 		return 1;

@@ -79,6 +79,12 @@ export interface DeliveryConfig {
 	bufferMax: number;
 	wakeOnDirectMessage: boolean;
 	chunkLongSends: boolean;
+	/** Flood-control token bucket: free messages before throttling (1–100). */
+	burst: number;
+	/** Milliseconds between messages once the burst is spent (100–60 000). */
+	intervalMs: number;
+	/** Upper bound on queued chunks; sends beyond it fail loudly (1–100 000). */
+	maxQueue: number;
 }
 
 export interface PiIrcConfig {
@@ -119,7 +125,15 @@ const DEFAULTS = {
 	capabilities: {
 		request: ["extended-join", "server-time", "away-notify", "batch", "draft/chathistory"] as string[],
 	},
-	delivery: { bufferMax: 500, wakeOnDirectMessage: true, chunkLongSends: true, wakeAllowNicks: [] as string[] },
+	delivery: {
+		bufferMax: 500,
+		wakeOnDirectMessage: true,
+		chunkLongSends: true,
+		wakeAllowNicks: [] as string[],
+		burst: 8,
+		intervalMs: 1000,
+		maxQueue: 512,
+	},
 	history: { catchupLimit: 50 },
 };
 
@@ -417,6 +431,21 @@ export function loadConfig(opts: {
 				delivery,
 				"delivery.bufferMax",
 				delivery.bufferMax ?? DEFAULTS.delivery.bufferMax,
+				1,
+				100_000,
+			),
+			burst: int(delivery, "delivery.burst", delivery.burst ?? DEFAULTS.delivery.burst, 1, 100),
+			intervalMs: int(
+				delivery,
+				"delivery.intervalMs",
+				delivery.intervalMs ?? DEFAULTS.delivery.intervalMs,
+				100,
+				60_000,
+			),
+			maxQueue: int(
+				delivery,
+				"delivery.maxQueue",
+				delivery.maxQueue ?? DEFAULTS.delivery.maxQueue,
 				1,
 				100_000,
 			),

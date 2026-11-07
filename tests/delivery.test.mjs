@@ -145,3 +145,19 @@ test("pause holds the queue; resume flushes it; a dead sender keeps chunks queue
 	dead = false;
 	assert.equal(q.drain(0).length, 1); // and goes out once the link is back
 });
+
+test("enqueue: queue bound throws instead of growing without limit", () => {
+	const out = [];
+	const q = new DeliveryQueue((t, x) => out.push(`${t}:${x}`), {
+		burst: 1,
+		intervalMs: 1000,
+		maxChunk: 20,
+		chunkLong: true,
+		maxQueue: 3,
+	});
+	q.enqueue("a", "one"); // 1 chunk
+	q.enqueue("a", "two"); // 1
+	q.enqueue("a", "three"); // 1 — at the bound now
+	assert.throws(() => q.enqueue("a", "four"), /delivery queue full/);
+	assert.equal(q.pending(), 3, "the three queued chunks are intact");
+});

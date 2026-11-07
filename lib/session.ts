@@ -162,7 +162,13 @@ export class IrcSession extends EventEmitter {
 		this.buffer = new MessageBuffer(config.delivery.bufferMax, client.realNick ?? client.nick);
 		this.delivery = new DeliveryQueue(
 			(target, text) => this.client.privmsg(target, text),
-			{ burst: 4, intervalMs: 2000, maxChunk: 400, chunkLong: config.delivery.chunkLongSends },
+			{
+				burst: config.delivery.burst,
+				intervalMs: config.delivery.intervalMs,
+				maxChunk: 400,
+				maxQueue: config.delivery.maxQueue,
+				chunkLong: config.delivery.chunkLongSends,
+			},
 		);
 		this.delivery.onDrop = (target, text, err) =>
 			console.warn(`pi-irc: dropped unsendable chunk to ${target} (${err.message}): ${text.slice(0, 60)}…`);
@@ -304,8 +310,8 @@ export class IrcSession extends EventEmitter {
 					this.roster.touch(e.from);
 					if (!replay) this.#maybeWake(e.from, env.body);
 				} else if (env?.kind === "reply") {
-					const joined = this.#replies.add(env.id, env.part, env.body);
-					if (joined !== null && this.rpc.resolveReply(env.id, joined)) {
+					const joined = this.#replies.add(e.from, env.id, env.part, env.body);
+					if (joined !== null && this.rpc.resolveReply(env.id, joined, e.from)) {
 						// Answer to one of our waiting asks — no wake: the asker
 						// is blocked inside the ask() tool call of a live turn.
 						this.buffer.push({

@@ -243,3 +243,26 @@ test("genuinely broken configs still fail loudly", () => {
 	const globalPath = writeRawConfig(dir, "global.json", `{ "server": { "host": `);
 	expectConfigError(() => loadConfig({ globalPath, projectDir: dir }), "global config");
 });
+
+test("delivery flood keys: defaults, clamping, project merge", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", { server: { host: "irc.example.net" } });
+	const cfg = loadConfig({ globalPath, projectDir: "/work/My_Project" });
+	assert.equal(cfg.delivery.burst, 8);
+	assert.equal(cfg.delivery.intervalMs, 1000);
+	assert.equal(cfg.delivery.maxQueue, 512);
+
+	// delivery is global-only (P15-a trust boundary): a project file trying
+	// to retune it is ignored with a warning, never merged.
+	const projectPath = writeConfig(path.join(dir, "p"), ".pi/pi-irc.json", {
+		delivery: { burst: 2, intervalMs: 500 },
+	});
+	const projCfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "p") });
+	assert.equal(projCfg.delivery.burst, 8, "project delivery section ignored");
+	assert.equal(projCfg.delivery.intervalMs, 1000);
+
+	expectConfigError(
+		() => loadConfig({ globalPath: writeConfig(dir, "bad.json", { server: { host: "irc.example.net" }, delivery: { burst: 0 } }) }),
+		"delivery.burst",
+	);
+});

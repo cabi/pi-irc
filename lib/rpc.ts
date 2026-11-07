@@ -119,22 +119,72 @@ export function envelopeParts(
 export class ReplyAssembler {
 	#parts = new Map<string, Map<number, string>>();
 	#totals = new Map<string, number>();
+	#seenAt = new Map<string, number>();
+	#now: () => number;
+	#ttlMs: number;
+	#maxPending: number;
+
+	constructor(opts: { now?: () => number; ttlMs?: number; maxPending?: number } = {}) {
+		this.#now = opts.now ?? (() => Date.now());
+		this.#ttlMs = opts.ttlMs ?? 10 * 60_000;
+		this.#maxPending = opts.maxPending ?? 64;
+	}
+
+	/** Key by sender+id: two peers using the same id must never interleave. */
+	static key(sender: string, id: string): string {
+		return `${sender}\0${id}`;
+	}
 
 	/** Returns the completed body when the last missing part arrived, else null. */
-	add(id: string, part: { i: number; n: number } | undefined, body: string): string | null {
+	add(sender: string, id: string, part: { i: number; n: number } | undefined, body: string): string | null {
 		if (!part) return body; // single-part reply
-		let have = this.#parts.get(id);
+		const key = ReplyAssembler.key(sender, id);
+		this.#sweep();
+		let have = this.#parts.get(key);
 		if (!have) {
+			// Bound the assembler: evict the stalest incomplete id first.
+			while (this.#parts.size >= this.#maxPending) this.#evictOldest();
 			have = new Map();
-			this.#parts.set(id, have);
-			this.#totals.set(id, part.n);
+			this.#parts.set(key, have);
+			this.#totals.set(key, part.n);
 		}
+		this.#seenAt.set(key, this.#now());
 		if (!have.has(part.i)) have.set(part.i, body); // first write wins on duplicates
-		if (this.#totals.get(id) !== part.n || have.size < part.n) return null;
+		if (this.#totals.get(key) !== part.n || have.size < part.n) return null;
 		const joined = Array.from({ length: part.n }, (_, k) => have!.get(k + 1) ?? "").join("");
-		this.#parts.delete(id);
-		this.#totals.delete(id);
+		this.#forget(key);
 		return joined;
+	}
+
+	#forget(key: string): void {
+		this.#parts.delete(key);
+		this.#totals.delete(key);
+		this.#seenAt.delete(key);
+	}
+
+	#evictOldest(): void {
+		let oldest: string | null = null;
+		let oldestAt = Infinity;
+		for (const [key, at] of this.#seenAt) {
+			if (at < oldestAt) {
+				oldestAt = at;
+				oldest = key;
+			}
+		}
+		if (oldest !== null) this.#forget(oldest);
+	}
+
+	/** Drop incomplete assemblies older than the TTL (fragment floods never accumulate). */
+	#sweep(): void {
+		const cutoff = this.#now() - this.#ttlMs;
+		for (const [key, at] of this.#seenAt) {
+			if (at < cutoff) this.#forget(key);
+		}
+	}
+
+	/** Incomplete ids currently held (diagnostics). */
+	pendingCount(): number {
+		return this.#parts.size;
 	}
 }
 
@@ -163,8 +213,8 @@ export interface InboundAsk {
 
 export type AskResolution =
 	| { status: "replied"; id: string; peer: string; reply: string; elapsedMs: number }
-	| { status: "timeout"; id: string; peer: string; question: string; timeoutMs: number };
-
+	| { status: "timeout"; id: string; peer: string; question: string; timeoutMs: number }
+	| { status: "disposed"; id: string; peer: string; question: string };
 export interface AskRegistryOptions {
 	now?: () => number;
 	setTimer?: (ms: number, fn: () => void) => unknown;
@@ -215,6 +265,7 @@ export class AskRegistry {
 			state: "waiting",
 		};
 		this.#outbound.set(id, entry);
+		this.#purge();
 		const done = new Promise<AskResolution>((resolve) => {
 			this.#waiters.set(id, resolve);
 			const handle = this.#setTimer(timeoutMs, () => {
@@ -231,12 +282,13 @@ export class AskRegistry {
 	}
 
 	/** Resolve a waiting outbound ask with a reply body. False if unknown/done. */
-	resolveReply(id: string, reply: string): boolean {
+	/** Resolve a waiting outbound ask with a reply body. False if unknown/done.
+	 * `from` (when given) must casefold-match the asked peer: a reply from
+	 * anyone else is foreign text, never the answer. */
+	resolveReply(id: string, reply: string, from?: string): boolean {
 		const ask = this.#outbound.get(id);
 		if (!ask || ask.state !== "waiting") return false;
-		const handle = this.#timers.get(id);
-		if (handle !== undefined) this.#clearTimer(handle);
-		this.#timers.delete(id);
+		if (from !== undefined && from.toLowerCase() !== ask.peer.toLowerCase()) return false;
 		ask.state = "replied";
 		ask.reply = reply;
 		ask.repliedAt = this.#now();
@@ -256,6 +308,7 @@ export class AskRegistry {
 	trackInbound(id: string, peer: string, question: string): InboundAsk {
 		const entry: InboundAsk = { id, peer, question, receivedAt: this.#now() };
 		this.#inbound.set(id, entry);
+		this.#purge();
 		return entry;
 	}
 
@@ -285,9 +338,43 @@ export class AskRegistry {
 		return { outbound, inbound };
 	}
 
-	/** Drop all timers (session stop). Pending promises settle on their timeout only if the timer already fired. */
+	/** Bound the registries: cap at 256 entries each, expire finished/stale
+	 * records after 24 h. Called on every track — Maps iterate in insertion
+	 * order, so eviction drops the oldest first. */
+	#purge(): void {
+		const cutoff = this.#now() - 24 * 3600_000;
+		for (const [id, a] of this.#outbound) {
+			if (a.state !== "waiting" && a.sentAt < cutoff) this.#outbound.delete(id);
+		}
+		for (const [id, a] of this.#inbound) {
+			if (a.resolvedAt !== undefined && a.receivedAt < cutoff) this.#inbound.delete(id);
+		}
+		while (this.#outbound.size > 256) {
+			const oldest = this.#outbound.keys().next().value as string;
+			if (this.#outbound.get(oldest)?.state === "waiting") break; // never evict live asks
+			this.#outbound.delete(oldest);
+		}
+		while (this.#inbound.size > 256) {
+			const oldest = this.#inbound.keys().next().value as string;
+			if (this.#inbound.get(oldest)?.resolvedAt === undefined) break;
+			this.#inbound.delete(oldest);
+		}
+	}
+
+	/** Drop all timers and settle every waiter: pending asks must not hang
+	 * past session stop. Settled as `disposed` — the ask op surfaces that. */
 	dispose(): void {
 		for (const handle of this.#timers.values()) this.#clearTimer(handle);
 		this.#timers.clear();
+		for (const [id, waiter] of this.#waiters) {
+			const ask = this.#outbound.get(id);
+			waiter({
+				status: "disposed",
+				id,
+				peer: ask?.peer ?? "?",
+				question: ask?.question ?? "",
+			});
+		}
+		this.#waiters.clear();
 	}
 }
