@@ -45,11 +45,9 @@ test("project server object is ignored — only registry names are honored", () 
 	const projectPath = writeConfig(dir, "project/.pi/pi-irc.json", { server: { host: "irc.test" } });
 	// A repo cannot invent an endpoint: the object form is ignored with a
 	// warning and the empty registry fails loudly instead of connecting.
-	expectConfigError(
-		() => loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "project") }),
-		"servers",
-	);
+	expectConfigError(() => loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "project") }), "servers");
 });
+
 test("defaults land where files are silent", () => {
 	const dir = tmpDir();
 	const globalPath = writeConfig(dir, "global.json", { server: { host: "irc.example.net" } });
@@ -171,20 +169,24 @@ test("explicit project slug wins over directory name", () => {
 test("wrong values fail loudly with the offending key", () => {
 	const dir = tmpDir();
 
-test("wakeOnChannel: fractional confidence parses, out-of-range floats reject", () => {
-	const dir = tmpDir();
-	const globalPath = writeConfig(dir, "global.json", {
-		server: { host: "irc.test" },
-		delivery: { wakeOnChannel: { channels: ["#lounge"], capabilities: "research", confidence: 0.35 } },
+	test("wakeOnChannel: fractional confidence parses, out-of-range floats reject", () => {
+		const dir = tmpDir();
+
+		const globalPath = writeConfig(dir, "global.json", {
+			server: { host: "irc.test" },
+			delivery: { wakeOnChannel: { channels: ["#lounge"], capabilities: "research", confidence: 0.35 } },
+		});
+
+		const config = loadConfig({ globalPath, projectDir: dir });
+		assert.equal(config.delivery.wakeOnChannel.confidence, 0.35);
+
+		const bad = writeConfig(dir, "bad.json", {
+			server: { host: "irc.test" },
+			delivery: { wakeOnChannel: { channels: ["#lounge"], capabilities: "research", confidence: 1.2 } },
+		});
+
+		expectConfigError(() => loadConfig({ globalPath: bad, projectDir: dir }), "delivery.wakeOnChannel.confidence");
 	});
-	const config = loadConfig({ globalPath, projectDir: dir });
-	assert.equal(config.delivery.wakeOnChannel.confidence, 0.35);
-	const bad = writeConfig(dir, "bad.json", {
-		server: { host: "irc.test" },
-		delivery: { wakeOnChannel: { channels: ["#lounge"], capabilities: "research", confidence: 1.2 } },
-	});
-	expectConfigError(() => loadConfig({ globalPath: bad, projectDir: dir }), "delivery.wakeOnChannel.confidence");
-});
 
 	const cases = [
 		[{ server: { host: 5 } }, "server.host"],
@@ -324,7 +326,12 @@ test("delivery flood keys: defaults, clamping, project merge", () => {
 
 test("wakeOnChannel: parsed with defaults when present", () => {
 	const dir = tmpDir();
-	const globalPath = writeConfig(dir, "global.json", { server: { host: "irc.test" }, delivery: { wakeOnChannel: { channels: ["#lounge"], capabilities: "research" } } });
+
+	const globalPath = writeConfig(dir, "global.json", {
+		server: { host: "irc.test" },
+		delivery: { wakeOnChannel: { channels: ["#lounge"], capabilities: "research" } },
+	});
+
 	const config = loadConfig({ globalPath, projectDir: dir });
 	assert.deepEqual(config.delivery.wakeOnChannel, {
 		channels: ["#lounge"],
@@ -344,19 +351,23 @@ test("wakeOnChannel: absent by default (channel traffic stays passive)", () => {
 
 test("wakeOnChannel: capabilities and channels are mandatory", () => {
 	const dir = tmpDir();
+
 	const globalPath = writeConfig(dir, "global.json", {
 		server: { host: "irc.test" },
 		delivery: { wakeOnChannel: { channels: ["#lounge"] } },
 	});
+
 	expectConfigError(() => loadConfig({ globalPath, projectDir: dir }), "delivery.wakeOnChannel.capabilities");
 });
 
 test("wakeOnChannel: confidence must stay within 0–1", () => {
 	const dir = tmpDir();
+
 	const globalPath = writeConfig(dir, "global.json", {
 		server: { host: "irc.test" },
 		delivery: { wakeOnChannel: { channels: ["#lounge"], capabilities: "research", confidence: 1.5 } },
 	});
+
 	expectConfigError(() => loadConfig({ globalPath, projectDir: dir }), "delivery.wakeOnChannel.confidence");
 });
 
@@ -364,6 +375,7 @@ test("wakeOnChannel: confidence must stay within 0–1", () => {
 
 test("P19: project picks its world by registry name", () => {
 	const dir = tmpDir();
+
 	const globalPath = writeConfig(dir, "global.json", {
 		servers: {
 			irc1: { host: "irc.one", port: 6667 },
@@ -371,6 +383,7 @@ test("P19: project picks its world by registry name", () => {
 		},
 		defaultServer: "irc1",
 	});
+
 	const projectPath = writeConfig(dir, "p/.pi/pi-irc.json", { server: "irc2" });
 
 	const cfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "p") });
@@ -382,10 +395,12 @@ test("P19: project picks its world by registry name", () => {
 
 test("P19: absent project server falls back to defaultServer", () => {
 	const dir = tmpDir();
+
 	const globalPath = writeConfig(dir, "global.json", {
 		servers: { a: { host: "a.example" }, b: { host: "b.example" } },
 		defaultServer: "b",
 	});
+
 	const projectPath = writeConfig(dir, "p/.pi/pi-irc.json", { channels: { defaults: ["#x"] } });
 
 	const cfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "p") });
@@ -403,13 +418,15 @@ test("P19: a single-world machine needs no defaultServer", () => {
 
 test("P19: two worlds and no pick anywhere is an error naming defaultServer", () => {
 	const dir = tmpDir();
+
 	const globalPath = writeConfig(dir, "global.json", {
 		servers: { a: { host: "a.example" }, b: { host: "b.example" } },
 	});
+
 	expectConfigError(() => loadConfig({ globalPath, projectDir: dir }), "defaultServer");
 });
 
-test("P19: project \"off\" disables the extension for that project", () => {
+test('P19: project "off" disables the extension for that project', () => {
 	const dir = tmpDir();
 	const globalPath = writeConfig(dir, "global.json", { servers: { a: { host: "a.example" } } });
 	const projectPath = writeConfig(dir, "p/.pi/pi-irc.json", { server: "off" });
@@ -420,10 +437,12 @@ test("P19: project \"off\" disables the extension for that project", () => {
 
 test("P19: unknown server name fails loudly with the known names", () => {
 	const dir = tmpDir();
+
 	const globalPath = writeConfig(dir, "global.json", {
 		servers: { irc1: { host: "irc.one" }, irc2: { host: "irc.two" } },
 		defaultServer: "irc1",
 	});
+
 	const projectPath = writeConfig(dir, "p/.pi/pi-irc.json", { server: "irc3" });
 
 	assert.throws(
@@ -434,10 +453,12 @@ test("P19: unknown server name fails loudly with the known names", () => {
 
 test("P19: legacy top-level server/auth becomes the implicit default world", () => {
 	const dir = tmpDir();
+
 	const globalPath = writeConfig(dir, "global.json", {
 		server: { host: "legacy.example", port: 6667, tls: false },
 		auth: { username: "agent", passwordEnv: "IRC_PASS" },
 	});
+
 	const projectPath = writeConfig(dir, "p/.pi/pi-irc.json", { server: "default" });
 
 	const cfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "p") });
@@ -448,42 +469,51 @@ test("P19: legacy top-level server/auth becomes the implicit default world", () 
 
 test("P19: mixing servers registry and top-level server/auth is an error", () => {
 	const dir = tmpDir();
+
 	const globalPath = writeConfig(dir, "global.json", {
 		servers: { a: { host: "a.example" } },
 		server: { host: "legacy.example" },
 	});
+
 	expectConfigError(() => loadConfig({ globalPath, projectDir: dir }), "servers");
 
 	const globalPath2 = writeConfig(dir, "g2.json", {
 		servers: { a: { host: "a.example" } },
 		auth: { username: "u", password: "p" },
 	});
+
 	expectConfigError(() => loadConfig({ globalPath: globalPath2, projectDir: dir }), "auth");
 });
 
 test("P19: defaultServer must name a registry entry", () => {
 	const dir = tmpDir();
+
 	const globalPath = writeConfig(dir, "global.json", {
 		servers: { a: { host: "a.example" } },
 		defaultServer: "nope",
 	});
+
 	expectConfigError(() => loadConfig({ globalPath, projectDir: dir }), "server");
 });
 
 test("P19: entry host is validated inside its registry slot", () => {
 	const dir = tmpDir();
+
 	const globalPath = writeConfig(dir, "global.json", {
 		servers: { a: { port: 6667 } },
 	});
+
 	expectConfigError(() => loadConfig({ globalPath, projectDir: dir }), "server.host");
 });
 
 test("P19: per-project wakeOnChannel rides the project delivery section", () => {
 	const dir = tmpDir();
+
 	const globalPath = writeConfig(dir, "global.json", {
 		servers: { a: { host: "a.example" } },
 		delivery: { wakeAllowNicks: ["admin"] },
 	});
+
 	const projectPath = writeConfig(dir, "p/.pi/pi-irc.json", {
 		delivery: { wakeOnChannel: { channels: ["#lounge"], capabilities: "frontend and CSS" } },
 	});

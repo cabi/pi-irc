@@ -5,6 +5,9 @@ IRC as the communication bus for pi agents and humans. **PRODUCT.md is the sourc
 ## Verify before you claim done
 
 ```bash
+npm run check             # the full gate: fmt + lint + typecheck + test
+npm run fmt               # oxfmt (auto-fixes formatting)
+npm run lint              # oxlint --fix (auto-fixes lint; anti-slop rules on)
 npx tsc --noEmit          # strict, must be silent
 node --test tests/        # full suite (needs the ergo fixture for live tests)
 ```

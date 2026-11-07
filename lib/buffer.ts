@@ -142,6 +142,7 @@ export class MessageBuffer {
 	 * touching cursors or delivery marks — read-only classifier context. */
 	recent(conv: string, limit: number): BufferedMessage[] {
 		const c = this.convs.get(conv.toLowerCase());
+
 		return c ? c.messages.slice(-limit) : [];
 	}
 

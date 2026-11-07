@@ -1,6 +1,6 @@
 # pi-irc — IRC as the communication bus for pi agents and humans
 
-**Status:** v0.5.0 — P1–P19 shipped: RFC 2812 client (reconnect, IRCv3 caps, SASL PLAIN, TLS), session bootstrap, `irc` tool with ask/reply RPC, presence, CHATHISTORY catch-up, per-agent channel wakes, and the P19 servers registry (many projects, many IRC worlds — projects pick a server *by name* from the admin-owned registry); three-way reviewed (P14) and every register finding remediated; validated live against ergo and InspIRCd · **Repo:** `~/Projects/pi-extensions/pi-irc` · **Related:** `pi-intercom` (same-machine session messaging — pi-irc is the same need on an open protocol, with humans and remote machines in the loop)
+**Status:** v0.5.0 — P1–P19 shipped: RFC 2812 client (reconnect, IRCv3 caps, SASL PLAIN, TLS), session bootstrap, `irc` tool with ask/reply RPC, presence, CHATHISTORY catch-up, per-agent channel wakes, and the P19 servers registry (many projects, many IRC worlds — projects pick a server _by name_ from the admin-owned registry); three-way reviewed (P14) and every register finding remediated; validated live against ergo and InspIRCd · **Repo:** `~/Projects/pi-extensions/pi-irc` · **Related:** `pi-intercom` (same-machine session messaging — pi-irc is the same need on an open protocol, with humans and remote machines in the loop)
 
 ## Division of labor with pi-intercom
 
@@ -48,7 +48,7 @@ Not in v1: multi-server federation, message history beyond the buffer, push noti
 
 ## Configuration
 
-Split by *what a thing is* (P19), not by suspicion. The admin's global file owns the machine's IRC **worlds** — endpoints, credentials, TLS trust — once per server; each project picks a world **by name** and owns its participation and wake policy:
+Split by _what a thing is_ (P19), not by suspicion. The admin's global file owns the machine's IRC **worlds** — endpoints, credentials, TLS trust — once per server; each project picks a world **by name** and owns its participation and wake policy:
 
 - `~/.pi/agent/pi-irc.json` — admin-owned: the `servers` registry (name → endpoint + optional SASL `auth`), `defaultServer`, machine defaults for every section
 - `<project>/.pi/pi-irc.json` — project-owned: `server` (a registry name or `"off"` — the per-project kill switch), `slug`, and full `channels`, `capabilities`, `delivery` (wake trust and `wakeOnChannel` included), `nick`, `history` sections
@@ -88,6 +88,7 @@ Split by *what a thing is* (P19), not by suspicion. The admin's global file owns
 ```
 
 Legacy top-level `server`/`auth` still parses as the implicit `default` world (deprecation warning). Missing global config = extension disabled with one clear log line; wrong config fails loudly with the offending key.
+
 ## Identity & presence
 
 - **Nick:** rendered from `nick.template`; unique per session by construction (`{shortId}`). On `ERR_NICKNAMEINUSE` (collision, case-insensitive per RFC 2812 §2.3.1) retry with a numeric suffix. Nick case-folding is handled by the extension, never the agent.
@@ -238,7 +239,7 @@ pi-irc/
 [pi-ask <id> timeout=600] question text…
 [pi-reply <id>] answer text…
 
-```
+````
 
 - `id`: 8-hex random, unique per outbound ask; `timeout` seconds, default 600
 - Rules: only DMs are parsed; a `[pi-reply]` with unknown `id` renders as a normal DM (late/foreign reply); replies are never longer than one DM chunk — the sender chunks, the receiver reassembles by `id`
@@ -358,7 +359,7 @@ pi-irc/
     "contextLines": 5                  // preceding lines as classifier context
   }
 }
-```
+````
 
 **Gate order** (deterministic first, intelligence last, fail-closed throughout):
 
@@ -366,22 +367,23 @@ pi-irc/
 2. **Own-line skip** — echoes of our own sends never wake.
 3. **Sender trust** — the P17 tier machinery, unchanged: an untrusted sender cannot wake by mentioning the nick any more than by DMing it.
 4. **Quiet window** — WAKE_QUIET_MS shared with DM wakes.
-5. **Mention** — a trusted sender naming our nick wakes deterministically, *no classifier call*.
-6. **Classifier** — everything else asks one typed question of a Jev-class "System One" decision model through **pi's model registry** (`ctx.modelRegistry.classify`; providers the user already configured — TypeSafe, OpenRouter, OpenCode, Cloudflare…): *state* = channel, sender, the line, recent context, and **this session's own capabilities**; *question* = bool "wake me?" with a calibrated probability. Below `confidence` → sleep on. Lookup errors, `stopReason !== "stop"`, thrown exceptions → **no wake**. pi-irc owns no keys, no HTTP, no cost plumbing.
+5. **Mention** — a trusted sender naming our nick wakes deterministically, _no classifier call_.
+6. **Classifier** — everything else asks one typed question of a Jev-class "System One" decision model through **pi's model registry** (`ctx.modelRegistry.classify`; providers the user already configured — TypeSafe, OpenRouter, OpenCode, Cloudflare…): _state_ = channel, sender, the line, recent context, and **this session's own capabilities**; _question_ = bool "wake me?" with a calibrated probability. Below `confidence` → sleep on. Lookup errors, `stopReason !== "stop"`, thrown exceptions → **no wake**. pi-irc owns no keys, no HTTP, no cost plumbing.
 
 No central router: every session classifies for itself; several specialists may wake on the same line (busy-presence dedupes organically). `MessageBuffer.recent()` feeds the classifier without touching read cursors; the wake itself lands the agent in its channel buffer with a system line naming the trigger (`via classifier` / `via mention`).
 
-**Why not a generative router**: cost per line, seconds of latency, and an LLM reading untrusted channel text is an injection surface. A classifier cannot follow instructions — adversarial text can only misroute *itself* (bounded: one wasted wake, rate-limited) — and the deterministic gates run before any model call regardless.
+**Why not a generative router**: cost per line, seconds of latency, and an LLM reading untrusted channel text is an injection surface. A classifier cannot follow instructions — adversarial text can only misroute _itself_ (bounded: one wasted wake, rate-limited) — and the deterministic gates run before any model call regardless.
 
 **Relation to the parked gateway**: this feature came out of the ADR-0005 discussion — the specialist scenario was the gateway's last strong use case, and it turned out to need no gateway at all. Human ⇄ agent stays direct DM + P17 trust; cross-machine agent asks stay `irc ask` + `project` tier; the dispatcher/broker-injection design remains parked behind triggers T1–T3.
+
 ### P19 — Server registry: many projects, many IRC worlds (done in v0.5.0)
 
-**Problem.** P15-a made `server`/`auth`/`nick`/`delivery` global-only after the security review found the credential-redirect vector (a repo pointing `server.host` at an attacker while `auth.passwordEnv` names the machine's real credential env var → SASL PLAIN exfiltration). But the cure over-reached: *which IRC world a project lives in is project policy, not machine policy*, and the single global config cannot express "three projects on irc1, one on irc2, one not on IRC at all" — with a global file present, every project connects, and there is no per-project off-switch. A repo already shapes the agent far more than any endpoint it could name (AGENTS.md, code, test scripts); the one thing an endpoint choice must never control is where credentials are sent.
+**Problem.** P15-a made `server`/`auth`/`nick`/`delivery` global-only after the security review found the credential-redirect vector (a repo pointing `server.host` at an attacker while `auth.passwordEnv` names the machine's real credential env var → SASL PLAIN exfiltration). But the cure over-reached: _which IRC world a project lives in is project policy, not machine policy_, and the single global config cannot express "three projects on irc1, one on irc2, one not on IRC at all" — with a global file present, every project connects, and there is no per-project off-switch. A repo already shapes the agent far more than any endpoint it could name (AGENTS.md, code, test scripts); the one thing an endpoint choice must never control is where credentials are sent.
 
 **Design — split by what a thing is, not by suspicion:**
 
 - **Global file owns the machine's IRC worlds, once per server** (`servers` registry): name → `{ host, port, tls, tlsInsecure, tlsCaFile, tlsServerName, passwordEnv, auth }`. Credentials are endpoint-bound: they travel with their registry entry and nowhere else. `defaultServer` names the world projects land in when they say nothing.
-- **Project file owns participation and policy**: `server` (a *name* from the registry, or `"off"`), plus full `channels`, `capabilities`, `delivery` (including `wakeOnChannel` and wake trust), `nick`, `history`, `slug`. This also retires the machine-wide-capabilities workaround from the specialist-bench discussion — per-project `wakeOnChannel` is the natural home.
+- **Project file owns participation and policy**: `server` (a _name_ from the registry, or `"off"`), plus full `channels`, `capabilities`, `delivery` (including `wakeOnChannel` and wake trust), `nick`, `history`, `slug`. This also retires the machine-wide-capabilities workaround from the specialist-bench discussion — per-project `wakeOnChannel` is the natural home.
 - **Hard invariants**: projects cannot invent endpoints (name indirection only — no `host`), cannot set `auth`/`tlsInsecure`/`tlsCaFile` (warning + ignore), cannot define the `servers` registry. Unknown server name fails loudly (ConfigError listing known names) rather than silently disconnecting a project. `"off"` disables the extension for that project with one log line.
 - **Legacy**: a top-level `server` object + `auth` in the global file still works — it becomes the implicit `default` registry entry (one-time deprecation warning). Mixing `servers` and top-level `server` is a config error.
 
@@ -392,15 +394,18 @@ No central router: every session classifies for itself; several specialists may 
 **Testing**: registry resolution and per-project picks; `"off"` and absent-with-no-default; unknown name; project `auth`/`servers`/host-object rejection; legacy implicit-default migration; delivery-from-project now legal (revises the P15-a test that asserted rejection); per-project delivery independence.
 
 **Record (v0.5.0).** Shipped in `lib/config.ts`: `parseServerEntry` (per-world endpoint + credential binding, rejects `tlsCaFile`+`tlsInsecure` together, resolves `~`), `resolveServerRef` (name → registry entry; `"off"` → disabled; unknown name → ConfigError listing known names), legacy top-level `server`/`auth` → implicit `default` entry with deprecation warning, `servers`+top-level `server` mix rejected. Project files honor `server` by name only; `auth`/`servers`/object-form `server` are ignored with a warning and admin-owned sections keep machine defaults. Per-project `delivery` (incl. `wakeOnChannel`, wake trust), `nick`, `channels`, `capabilities`, `history`, `slug` all legal in project files now. Config validation has its own test module (25 tests); suite 268/268, tsc clean; `docs/example.pi-irc.json` demonstrates registry + per-project picks and parses through the real loader.
+
 ## Terms
 
+| Term              | Meaning                                                                                                                              |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| project-channel   | The channel rendered from `channels.projectTemplate`; every session of a project auto-joins it; created implicitly by the first JOIN |
+| default channels  | Extra admin-configured channels joined at startup (e.g. a cross-project lobby)                                                       |
+| roster            | Live mapping of channel nicks to pi agents (with project, main/sub role, session id) or humans                                       |
+| buffer cursor     | Per-session read position in a conversation's ring buffer; `read` advances it                                                        |
+| wake-on-DM        | Steering an idle session when a direct message arrives; throttled, never triggered by channel chatter                                |
+| identity metadata | Machine-readable realname (`pi/1 project=… role=… session=…`) announcing an agent over `USER`                                        |
 
-| Term | Meaning |
-|---|---|
-| project-channel | The channel rendered from `channels.projectTemplate`; every session of a project auto-joins it; created implicitly by the first JOIN |
-| default channels | Extra admin-configured channels joined at startup (e.g. a cross-project lobby) |
-| roster | Live mapping of channel nicks to pi agents (with project, main/sub role, session id) or humans |
-| buffer cursor | Per-session read position in a conversation's ring buffer; `read` advances it |
-| wake-on-DM | Steering an idle session when a direct message arrives; throttled, never triggered by channel chatter |
-| identity metadata | Machine-readable realname (`pi/1 project=… role=… session=…`) announcing an agent over `USER` |
+```
+
 ```

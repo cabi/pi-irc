@@ -38,14 +38,26 @@ function identityFrom(cwd: string, sessionId: string): IdentityContext {
 		parentId: role === "sub" ? process.env.PI_IRC_PARENT?.slice(0, 8) : undefined,
 	};
 }
+
 /** P18 classifier backend: rides pi's model registry (the user's configured
  * providers — typesafe/openrouter/opencode/…), so pi-irc owns no keys and
  * no HTTP. Fail-closed: lookup errors and stopReason !== "stop" mean no wake. */
+/** Guard for classifier answers: bool with a numeric probability. */
+function isBoolWithProbability(value: unknown): value is { type: "bool"; probability: number } {
+	if (typeof value !== "object" || value === null) return false;
+	// JUSTIFICATION: the typeof-object check above narrows non-null values to object
+	const v = value as Record<string, unknown>;
+
+	return v.type === "bool" && typeof v.probability === "number";
+}
+
 function makeChannelClassifier(registry: ModelRegistryLike, modelId: string): ChannelClassifier {
 	return async (input) => {
 		try {
 			const model = await resolveClassifier(registry, modelId);
+
 			if (!model) return { ok: false, confidence: 0, error: `classifier model unavailable (${modelId || "any"})` };
+
 			const result = await registry.classify(model, {
 				state: {
 					channel: input.channel,
@@ -65,13 +77,17 @@ function makeChannelClassifier(registry: ModelRegistryLike, modelId: string): Ch
 					},
 				},
 			});
+
 			if (result.stopReason !== "stop") {
 				return { ok: false, confidence: 0, error: result.errorMessage ?? result.stopReason };
 			}
+
 			const answer = result.answers.wake;
-			if (answer?.type !== "bool" || typeof answer.probability !== "number") {
+
+			if (!isBoolWithProbability(answer)) {
 				return { ok: false, confidence: 0, error: "classifier returned no bool probability" };
 			}
+
 			return { ok: true, confidence: answer.probability };
 		} catch (err) {
 			return { ok: false, confidence: 0, error: err instanceof Error ? err.message : String(err) };
@@ -86,7 +102,9 @@ async function resolveClassifier(
 ): Promise<ClassifierModelInfo | undefined> {
 	if (!modelId) return (await registry.getAvailableOfType("classifier"))[0];
 	const slash = modelId.indexOf("/");
+
 	if (slash <= 0) return undefined;
+
 	return registry.getModelOfType("classifier", modelId.slice(0, slash), modelId.slice(slash + 1));
 }
 
@@ -97,7 +115,7 @@ interface ClassifierModelInfo {
 
 /** Structural slice of pi's model registry — only what the classifier needs. */
 interface ModelRegistryLike {
-	getAvailableOfType(type: "classifier"): Promise<ClassifierModelInfo[]>;
+	getAvailableOfType(type: "classifier"): Promise<readonly ClassifierModelInfo[]>;
 	getModelOfType(
 		type: "classifier",
 		provider: string,
@@ -114,6 +132,11 @@ interface ModelRegistryLike {
 		stopReason: "stop" | "error" | "aborted";
 		errorMessage?: string;
 	}>;
+}
+
+/** session_start ctx on this pi build: carries the model registry the public typings don't declare yet. */
+interface SessionStartCtx {
+	modelRegistry?: ModelRegistryLike;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -138,6 +161,7 @@ export default function (pi: ExtensionAPI) {
 	let lastSessionId = "";
 	let classifier: ChannelClassifier | undefined;
 	let notify: (message: string, type?: "info" | "warning" | "error") => void = () => {};
+
 	/** Busy presence mirrors the host agent's run state (AWAY while mid-run). */
 	let busy = false;
 
@@ -152,6 +176,7 @@ export default function (pi: ExtensionAPI) {
 		booting = IrcSession.connect(config, identityFrom(ctx.cwd, sid), { classifier })
 			.then((s) => {
 				session = s;
+
 				if (classifier && !s.classifier) s.attachClassifier(classifier);
 				// Wake steer (DM or channel): hand the line to the agent so it
 				// answers humans/peers without polling.
@@ -179,7 +204,9 @@ export default function (pi: ExtensionAPI) {
 		const sid = ctx.sessionManager.getSessionId();
 		// P18: the session_start ctx carries the model registry — capture it
 		// for the channel-wake classifier (built lazily, only if configured).
-		const registry = (ctx as unknown as { modelRegistry?: ModelRegistryLike }).modelRegistry;
+		// JUSTIFICATION: session_start ctx carries modelRegistry on this pi build; the public typings lag behind. Single assertion, presence-checked before use.
+		const registry = (ctx as SessionStartCtx).modelRegistry;
+
 		if (registry && config.delivery.wakeOnChannel) {
 			classifier = makeChannelClassifier(registry, config.delivery.wakeOnChannel.classifier);
 			// Live sessions (kept across /reload) gain the classifier in place.

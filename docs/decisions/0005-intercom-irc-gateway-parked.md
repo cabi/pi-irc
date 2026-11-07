@@ -18,18 +18,18 @@
 The operator's questions falsified the daemon's strongest use case:
 
 - **Human ⇄ agent needs no gateway at all.** Humans and agents are peers on
-   IRC; direct DMs both ways + P17 sender-trust wakes already serve this
-   path today. A relay would add nothing but a new process.
+  IRC; direct DMs both ways + P17 sender-trust wakes already serve this
+  path today. A relay would add nothing but a new process.
 - **Cross-machine agent asks are already solved** by Option C (P17 `project`
-   tier: account-verified same-project agents wake each other via `irc ask`).
+  tier: account-verified same-project agents wake each other via `irc ask`).
 - What remained for a relay was: (L0) re-skinning that traffic in intercom UX
-   (synthetic peers in `intercom list`) — comfort, not capability; (L1)
-   broker-injection of remote-initiated traffic — the one genuinely new
-   capability, and precisely the riskiest (steer injection behind six locks).
+  (synthetic peers in `intercom list`) — comfort, not capability; (L1)
+  broker-injection of remote-initiated traffic — the one genuinely new
+  capability, and precisely the riskiest (steer injection behind six locks).
 - **Channel wakes needed neither**: the specialist scenario (N local pi
-   sessions with different specialities reacting to human chatter in a shared
-   channel) is pure pi-irc core — P17 trust semantics extended from
-   DM-context to channel-context, judged per-agent by a cheap classifier.
+  sessions with different specialities reacting to human chatter in a shared
+  channel) is pure pi-irc core — P17 trust semantics extended from
+  DM-context to channel-context, judged per-agent by a cheap classifier.
 
 ## Feasibility facts recorded for whoever builds it later
 
@@ -50,7 +50,7 @@ The operator's questions falsified the daemon's strongest use case:
 ## Triggers to revisit
 
 - **T1** a second machine actually joins the project and wants single-tool UX.
-- **T2** a real need for sessions *without* pi-irc to be reachable from IRC.
+- **T2** a real need for sessions _without_ pi-irc to be reachable from IRC.
 - **T3** pi-intercom grows a transport seam, making the bridge a small
   upstream contribution instead of our daemon.
 

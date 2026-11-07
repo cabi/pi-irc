@@ -40,11 +40,11 @@ up edits to the checkout.
 
 ## Configure
 
-pi-irc ships disabled until a global config exists — one clear log line, no crash. Layered config split by *what a thing is* (P19): the admin's global file owns the machine's IRC **worlds** — endpoints, credentials, TLS trust — once per server; each project picks a world *by name* and owns its participation and wake policy:
+pi-irc ships disabled until a global config exists — one clear log line, no crash. Layered config split by _what a thing is_ (P19): the admin's global file owns the machine's IRC **worlds** — endpoints, credentials, TLS trust — once per server; each project picks a world _by name_ and owns its participation and wake policy:
 
 - `~/.pi/agent/pi-irc.json` — admin-owned: the **`servers` registry** (name → `{ host, port, tls, auth, … }`), `defaultServer`, machine defaults for every section
 - `<project>/.pi/pi-irc.json` — project-owned: `server` (a registry **name** or `"off"`), plus full `channels`, `capabilities`, `delivery` (wake trust and `wakeOnChannel` included), `nick`, `history`, `slug`
-- a project can never invent an endpoint or touch credentials: `servers`, `auth`, and a `server` *object* in a project file are ignored with a warning — only names are honored
+- a project can never invent an endpoint or touch credentials: `servers`, `auth`, and a `server` _object_ in a project file are ignored with a warning — only names are honored
 
 Minimal global config — one world, no `defaultServer` needed on single-world machines (see `docs/example.pi-irc.json` for all keys):
 
@@ -78,7 +78,6 @@ Server passwords are referenced, never stored: `"passwordEnv": "PI_IRC_PASSWORD"
 Self-signed or internal-CA servers have two options — pin the cert (keeps full verification) or skip it entirely: `"tlsCaFile": "~/.pi/agent/certs/irc.lan.pem"` or `"tlsInsecure": true` inside the server entry; the two are mutually exclusive.
 
 Authenticated networks (SASL PLAIN over TLS — Libera-class servers): put `auth` inside the server entry as above. It adds the `sasl` capability automatically and **fails closed**: if the server won't negotiate SASL or the credentials are rejected, the session never registers anonymously. SNI override behind proxies: `"tlsServerName": "…"`.
-
 
 **Outbound pacing** (flood control, admin-owned `delivery` section): a token bucket sends `delivery.burst` messages immediately (default 8), then one per `delivery.intervalMs` (default 1000). Queued chunks are bounded by `delivery.maxQueue` (default 512) — a send beyond the bound fails loudly to the caller instead of growing memory without limit. Long messages chunk at 400 UTF-8 bytes with `(i/n)` part markers; replies to `ask` reassemble exactly.
 
@@ -123,7 +122,7 @@ Inside pi there is also a slash command that rides the same session:
 ### Channel wakes: talk to specialists in the room
 
 By default channel chatter is passive. Opt a session in and it wakes when
-channel talk is *its* business — each session judges for itself against the
+channel talk is _its_ business — each session judges for itself against the
 capabilities you give it; there is no central router:
 
 ```jsonc

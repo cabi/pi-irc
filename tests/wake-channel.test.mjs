@@ -8,6 +8,7 @@ import { EventEmitter } from "node:events";
 import { loadViaPi, repoFile, sleep } from "./helpers.mjs";
 
 const { IrcSession } = await loadViaPi(repoFile("lib", "session.ts"));
+
 const { IrcClient } = await loadViaPi(repoFile("lib", "irc-client.ts"));
 
 /** Same auto-answer contract as presence.test.mjs. */
@@ -32,18 +33,24 @@ class FakeServer extends EventEmitter {
 	#flush() {
 		const pending = this.#answers;
 		this.#answers = [];
+
 		for (const a of pending) queueMicrotask(a);
 	}
 
 	#autoAnswer(line) {
 		if (!this.#client) return;
 		const m = /^(\S+)(?:\s+(.*))?$/.exec(line);
+
 		if (!m) return;
 		const [, cmd, rest = ""] = m;
 		const me = this.#client.nick;
+
 		switch (cmd) {
 			case "JOIN": {
-				for (const chan of rest.split(",").map((c) => c.trim()).filter(Boolean)) {
+				for (const chan of rest
+					.split(",")
+					.map((c) => c.trim())
+					.filter(Boolean)) {
 					this.say(`:${me}!pi@h JOIN ${chan}`);
 					this.say(`:srv 331 ${me} ${chan} :No topic is set`);
 					this.say(`:srv 353 ${me} = ${chan} :${me} carol`);
@@ -51,16 +58,20 @@ class FakeServer extends EventEmitter {
 					this.say(`:srv 352 ${me} ${chan} pi h srv ${me} H :0 pi-agent project=proj role=main session=s1`);
 					this.say(`:srv 315 ${me} ${chan} :End of WHO list`);
 				}
+
 				break;
 			}
+
 			case "TOPIC": {
 				this.say(`:srv 331 ${me} ${rest} :No topic is set`);
 				break;
 			}
+
 			case "WHO": {
 				this.say(`:srv 315 ${me} ${rest.split(" ")[0]} :End of WHO list`);
 				break;
 			}
+
 			default:
 				break;
 		}
@@ -120,16 +131,25 @@ async function boot({ classifier } = {}) {
 	const pending = IrcSession.connect(makeConfig(), ident, { client, classifier });
 	srv.say(":srv 376 pi-main-s1 :End of MOTD");
 	const session = await pending;
+
 	return { srv, client, session };
 }
 
 /** Fixed-verdict classifier that records every call. */
 function spyClassifier(verdict) {
 	const calls = [];
+
 	const fn = async (input) => {
 		calls.push(input);
-		return typeof verdict === "function" ? verdict(input) : verdict;
+
+		return isFunction(verdict) ? verdict(input) : verdict;
 	};
+
+	/** @param {unknown} value @returns {value is Function} */
+	function isFunction(value) {
+		return value instanceof Function;
+	}
+
 	return { fn, calls };
 }
 
@@ -145,7 +165,10 @@ test("classifier path: trusted sender + confidence ≥ threshold wakes", async (
 	assert.match(wakes[0].text, /carol in #lounge:/, "wake text carries channel context");
 	assert.match(wakes[0].text, /research how ergo/);
 	const sys = session.read("#lounge").map((m) => m.text);
-	assert.ok(sys.some((t) => /wake via classifier/.test(t)), `system line names the trigger: ${sys}`);
+	assert.ok(
+		sys.some((t) => /wake via classifier/.test(t)),
+		`system line names the trigger: ${sys}`,
+	);
 });
 
 test("classifier path: confidence below threshold never wakes", async () => {
@@ -183,6 +206,7 @@ test("classifier throwing is caught: no wake, no crash", async () => {
 	const clf = spyClassifier(() => {
 		throw new Error("network down");
 	});
+
 	const { srv, session } = await boot({ classifier: clf.fn });
 	const wakes = [];
 	session.on("wake", (w) => wakes.push(w));
@@ -201,7 +225,10 @@ test("mention of own nick wakes deterministically — classifier never called", 
 	assert.equal(wakes.length, 1, "mention wakes");
 	assert.equal(clf.calls.length, 0, "no classifier call for mentions");
 	const sys = session.read("#lounge").map((m) => m.text);
-	assert.ok(sys.some((t) => /wake via mention/.test(t)), `system line names mention: ${sys}`);
+	assert.ok(
+		sys.some((t) => /wake via mention/.test(t)),
+		`system line names mention: ${sys}`,
+	);
 });
 
 test("untrusted sender: no wake, classifier never consulted", async () => {

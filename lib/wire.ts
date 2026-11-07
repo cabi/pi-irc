@@ -155,6 +155,7 @@ export const wire = {
 	user: (username: string, realname: string) =>
 		formatLine({ command: "USER", params: [username, "0", "*"], trailing: realname }),
 	join: (channels: string[]) => {
+		// eslint-disable-next-line no-control-regex -- intentional: the RFC 2812 channel grammar excludes raw C0 controls (\x00, \x07)
 		const invalid = channels.filter((c) => !/^[#+&][^\s,\x00\x07:]{1,49}$/.test(c));
 
 		if (invalid.length > 0) throw new WireError(`invalid channel name(s): ${invalid.join(", ")}`);

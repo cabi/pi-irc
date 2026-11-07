@@ -69,7 +69,7 @@ function rawClient(nick) {
 			if (!line) continue;
 			lines.push(line);
 
-			for (const w of [...waiters]) w(line);
+			for (const w of waiters.slice()) w(line);
 		}
 	});
 	const send = (l) => sock.write(`${l}\r\n`);

@@ -17,6 +17,7 @@ export interface ChannelState {
 }
 
 export function validChannelName(name: string): boolean {
+	// eslint-disable-next-line no-control-regex -- intentional: the RFC 2812 channel grammar excludes raw C0 controls (\x00, \x07)
 	if (!/^[#+&][^\s,\x00\x07:]{1,49}$/.test(name)) return false;
 
 	return true;

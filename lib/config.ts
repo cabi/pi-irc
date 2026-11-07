@@ -313,6 +313,10 @@ function isNonEmptyString(value: unknown): value is string {
 	return typeof value === "string" && value.length > 0;
 }
 
+function isFiniteNumber(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value);
+}
+
 function isIntInRange(value: unknown, min: number, max: number): value is number {
 	return typeof value === "number" && Number.isInteger(value) && value >= min && value <= max;
 }
@@ -346,13 +350,17 @@ export interface WakeOnChannelConfig {
 
 function parseWakeOnChannel(key: string, value: unknown): WakeOnChannelConfig | undefined {
 	if (value === undefined) return undefined;
+
 	if (!isJsonObject(value)) throw new ConfigError(key, "expected an object");
 
 	if (!isNonEmptyString(value.capabilities)) {
 		throw new ConfigError(`${key}.capabilities`, "expected a non-empty string describing this agent's speciality");
 	}
+
 	const channels = channelList(`${key}.channels`, value.channels);
+
 	if (channels.length === 0) throw new ConfigError(`${key}.channels`, "expected at least one channel");
+
 	return {
 		channels,
 		capabilities: str(`${key}.capabilities`, value.capabilities),
@@ -376,7 +384,7 @@ function int(key: string, value: unknown, min: number, max: number): number {
 
 /** Confidence floors are floats (0–1), unlike the integer bounds elsewhere. */
 function float01(key: string, value: unknown): number {
-	if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+	if (!isFiniteNumber(value) || value < 0 || value > 1) {
 		throw new ConfigError(key, "expected a number 0–1");
 	}
 
@@ -486,7 +494,7 @@ export function loadConfig(opts: {
 	}
 
 	if (global.servers !== undefined && global.server !== undefined) {
-		throw new ConfigError('servers', 'use either the "servers" registry or the top-level "server" — not both');
+		throw new ConfigError("servers", 'use either the "servers" registry or the top-level "server" — not both');
 	}
 
 	if (global.servers !== undefined && global.auth !== undefined) {
@@ -520,18 +528,23 @@ export function loadConfig(opts: {
 		}
 
 		registry.set("default", legacy);
-		console.warn('pi-irc: top-level "server"/"auth" is deprecated — name your worlds under "servers" and point projects at them');
+		console.warn(
+			'pi-irc: top-level "server"/"auth" is deprecated — name your worlds under "servers" and point projects at them',
+		);
 	}
 
 	if (registry.size === 0) {
 		throw new ConfigError("servers", 'no servers defined — add entries to the "servers" registry in the global config');
 	}
+
 	// --- Which world does this project live in? ---
 	let pick: string | undefined;
 
 	if (project.server !== undefined) {
 		if (isJsonObject(project.server)) {
-			console.warn('pi-irc: ignoring "server" object in project config — use a server NAME from the global "servers" registry');
+			console.warn(
+				'pi-irc: ignoring "server" object in project config — use a server NAME from the global "servers" registry',
+			);
 		} else if (project.server === "off") {
 			console.log('pi-irc: disabled for this project (server: "off")');
 
@@ -615,6 +628,7 @@ export function loadConfig(opts: {
 			...(password !== undefined ? { password } : { passwordEnv: authPasswordEnv }),
 		};
 	}
+
 	const config: PiIrcConfig = {
 		...(pick !== undefined ? { serverName: pick } : {}),
 		server: {

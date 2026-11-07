@@ -407,11 +407,12 @@ export class IrcSession extends EventEmitter {
 			const at = ts !== undefined && Number.isFinite(ts) ? ts : undefined;
 
 			if (/^[#&+!]/.test(e.target)) {
-			// Channel chatter: buffer under the channel; P18 may wake below.
-			this.buffer.push({ conv: e.target, from: e.from, text: e.text, ...(at ? { ts: at } : {}) });
-			this.roster.touch(e.from);
-			if (!replay) void this.#maybeChannelWake(e.target, e.from, e.text);
-		} else if (!e.toSelf) {
+				// Channel chatter: buffer under the channel; P18 may wake below.
+				this.buffer.push({ conv: e.target, from: e.from, text: e.text, ...(at ? { ts: at } : {}) });
+				this.roster.touch(e.from);
+
+				if (!replay) void this.#maybeChannelWake(e.target, e.from, e.text);
+			} else if (!e.toSelf) {
 				// DM to us: envelopes first, plain text second.
 				const env = parseEnvelope(e.text);
 
@@ -809,31 +810,43 @@ export class IrcSession extends EventEmitter {
 	 */
 	async #maybeChannelWake(channel: string, from: string, text: string): Promise<void> {
 		const cfg = this.config.delivery.wakeOnChannel;
+
 		if (cfg === undefined) return;
+
 		if (!cfg.channels.some((c) => c.toLowerCase() === channel.toLowerCase())) return;
 		const me = this.client.realNick ?? this.client.nick;
+
 		if (from.toLowerCase() === me.toLowerCase()) return;
 		let via = "mention";
+
 		// Trust gate first, unconditionally: an untrusted sender cannot wake
 		// this session by mentioning it any more than by DMing it.
 		if (!this.#wakeTrusted(from)) return;
+
 		if (!text.toLowerCase().includes(me.toLowerCase())) {
 			via = "classifier";
+
 			if (this.now() - this.lastWakeAt < WAKE_QUIET_MS) return;
+
 			if (this.classifier === undefined) return;
 			const context = this.buffer.recent(channel, cfg.contextLines).map((m) => `${m.from}: ${m.text}`);
 			let verdict: ChannelWakeVerdict;
+
 			try {
 				verdict = await this.classifier({ channel, from, text, context, capabilities: cfg.capabilities });
 			} catch (err) {
 				verdict = { ok: false, confidence: 0, error: err instanceof Error ? err.message : String(err) };
 			}
+
 			if (!verdict.ok) {
 				console.warn(`pi-irc: channel-wake classifier failed (no wake): ${verdict.error ?? "?"}`);
+
 				return;
 			}
+
 			if (verdict.confidence < cfg.confidence) return;
 		}
+
 		if (this.now() - this.lastWakeAt < WAKE_QUIET_MS) return;
 		this.lastWakeAt = this.now();
 		this.buffer.push({
