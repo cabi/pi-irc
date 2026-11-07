@@ -41,6 +41,8 @@ interface Conversation {
 	cursorSeq: number; // contiguous prefix read
 	/** Delivered-but-not-yet-contiguous seqs (filtered reads above the cursor). */
 	delivered: Set<number>;
+	/** Incremental unread count: seq > cursorSeq && !delivered.has(seq). */
+	pending: number;
 }
 
 /** Characters that can legally continue an IRC nick — mention boundaries. */
@@ -78,7 +80,7 @@ export class MessageBuffer {
 		const key = msg.conv.toLowerCase();
 		let conv = this.convs.get(key);
 		if (!conv) {
-			conv = { display: msg.display ?? msg.conv, messages: [], cursorSeq: 0, delivered: new Set() };
+			conv = { display: msg.display ?? msg.conv, messages: [], cursorSeq: 0, delivered: new Set(), pending: 0 };
 			this.convs.set(key, conv);
 		}
 		const entry: BufferedMessage = {
@@ -92,9 +94,14 @@ export class MessageBuffer {
 			mentioned: mentionsNick(msg.text, this.selfNick) && msg.from.toLowerCase() !== this.selfNick.toLowerCase(),
 		};
 		conv.messages.push(entry);
+		conv.pending += 1; // every fresh message starts unread
 		if (conv.messages.length > this.maxPerConv) {
 			const dropped = conv.messages.splice(0, conv.messages.length - this.maxPerConv);
-			for (const m of dropped) conv.delivered.delete(m.seq); // no dead marks
+			for (const m of dropped) {
+				const wasPending = m.seq > conv.cursorSeq && !conv.delivered.has(m.seq);
+				conv.delivered.delete(m.seq); // no dead marks
+				if (wasPending) conv.pending -= 1;
+			}
 		}
 		return entry;
 	}
@@ -103,16 +110,13 @@ export class MessageBuffer {
 	unreadAll(): Record<string, number> {
 		const out: Record<string, number> = {};
 		for (const conv of this.convs.values()) {
-		const n = conv.messages.filter((m) => m.seq > conv.cursorSeq && !conv.delivered.has(m.seq)).length;
-			if (n > 0) out[conv.display] = n;
+			if (conv.pending > 0) out[conv.display] = conv.pending;
 		}
 		return out;
 	}
 
 	unread(conv: string): number {
-		const c = this.convs.get(conv.toLowerCase());
-		if (!c) return 0;
-	return c.messages.filter((m) => m.seq > c.cursorSeq && !c.delivered.has(m.seq)).length;
+		return this.convs.get(conv.toLowerCase())?.pending ?? 0;
 	}
 
 	/**
@@ -142,7 +146,12 @@ export class MessageBuffer {
 		// Mark exactly the delivered messages read; the contiguous prefix
 		// advances the cursor, the rest wait as delivery marks so nothing
 		// skipped can ever be lost and nothing delivered repeats.
-		for (const m of result) this.convs.get(m.conv)?.delivered.add(m.seq);
+		for (const m of result) {
+			const conv = this.convs.get(m.conv);
+			if (!conv) continue;
+			if (!conv.delivered.has(m.seq)) conv.pending -= 1;
+			conv.delivered.add(m.seq);
+		}
 		for (const conv of targets) {
 			if (!conv) continue;
 			for (const m of conv.messages) {
@@ -167,9 +176,10 @@ mark(conv?: string): Record<string, number> {
 		if (!c) continue;
 		const last = c.messages.at(-1);
 		if (last && last.seq > c.cursorSeq) {
-		out[c.display] = c.messages.filter((m) => m.seq > c.cursorSeq && !c.delivered.has(m.seq)).length;
+			out[c.display] = c.pending;
 		c.cursorSeq = last.seq;
 		c.delivered.clear();
+		c.pending = 0;
 		}
 	}
 	return out;

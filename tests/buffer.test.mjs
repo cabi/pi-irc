@@ -140,3 +140,42 @@ test("mark flushes cursors without draining: all, one conv, unknown, no-op", () 
 	assert.deepEqual(buf.mark("#nope"), {});
 	assert.equal(buf.history("#a").length, 2);
 });
+
+test("P16: incremental unread counters never drift from brute force (fuzz)", () => {
+	const buf = new MessageBuffer(7, "pi-main-s1");
+	const brute = () => {
+		const out = {};
+		for (const [key, conv] of buf.convs) {
+			const n = conv.messages.filter((m) => m.seq > conv.cursorSeq && !conv.delivered.has(m.seq)).length;
+			if (n > 0) out[conv.display] = n;
+		}
+		return out;
+	};
+	// Direct field access is the point: same object, two counting strategies.
+	const convs = ["#chan", "#other", "alice", "bob"];
+	let seed = 42;
+	const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+	for (let step = 0; step < 4_000; step++) {
+		const conv = convs[Math.floor(rnd() * convs.length)];
+		const roll = rnd();
+		if (roll < 0.55) {
+			buf.push({ conv, from: roll < 0.3 ? "alice" : "carol", text: `m${step}` });
+		} else if (roll < 0.8) {
+			buf.read({
+				...(rnd() < 0.4 ? { conv } : {}),
+				...(rnd() < 0.4 ? { from: "alice" } : {}),
+				...(rnd() < 0.4 ? { since: Date.now() - Math.floor(rnd() * 2) } : {}),
+				limit: Math.floor(rnd() * 5) + 1,
+			});
+		} else if (roll < 0.95) {
+			buf.mark(rnd() < 0.5 ? undefined : conv);
+		} else {
+			buf.history(conv);
+		}
+		assert.deepEqual(
+			Object.fromEntries(Object.entries(buf.unreadAll()).sort()),
+			Object.fromEntries(Object.entries(brute()).sort()),
+			`drift at step ${step}`,
+		);
+	}
+});
