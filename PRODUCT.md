@@ -1,6 +1,6 @@
 # pi-irc — IRC as the communication bus for pi agents and humans
 
-**Status:** v0.3.0 — P1–P7 shipped: RFC 2812 client (reconnect, IRCv3 caps, SASL PLAIN, TLS), session bootstrap, `irc` tool with ask/reply RPC and presence; validated live against ergo and InspIRCd · **Repo:** `~/Projects/pi-extensions/pi-irc` · **Related:** `pi-intercom` (same-machine session messaging — pi-irc is the same need on an open protocol, with humans and remote machines in the loop)
+**Status:** v0.4.2 — P1–P16 shipped: RFC 2812 client (reconnect, IRCv3 caps, SASL PLAIN, TLS), session bootstrap, `irc` tool with ask/reply RPC, presence, CHATHISTORY catch-up; three-way reviewed (P14) and every register finding remediated; validated live against ergo and InspIRCd · **Repo:** `~/Projects/pi-extensions/pi-irc` · **Related:** `pi-intercom` (same-machine session messaging — pi-irc is the same need on an open protocol, with humans and remote machines in the loop)
 
 ### v0.3.2 — `server.tlsCaFile`: pin internal CAs, keep verification
 
@@ -176,10 +176,7 @@ pi-irc/
 - **Smoke suite:** deterministic mock server covering registration, nick collision retry, first-join channel creation + topic stamp, roster mapping (main/sub/human), buffer cursors, DM wake throttling, reconnect-and-rejoin; plus a live ergo container test.
 - **Validation run (P3):** two pi sessions in one project coordinate a small task exclusively through IRC while a human with a stock IRC client joins mid-task and redirects the work. Findings engrave back as pinning checks.
 
-# pi-irc — IRC as the communication bus for pi agents and humans
-
-**Status:** v0.4.1 — P1–P16 shipped: RFC 2812 client (reconnect, IRCv3 caps, SASL PLAIN, TLS), session bootstrap, `irc` tool with ask/reply RPC, presence, CHATHISTORY catch-up; three-way reviewed (P14) and every register finding remediated; validated live against ergo and InspIRCd · **Repo:** `~/Projects/pi-extensions/pi-irc` · **Related:** `pi-intercom` (same-machine session messaging — pi-irc is the same need on an open protocol, with humans and remote machines in the loop)
-
+## Roadmap
 - **P0 (done)** product definition, glossary, ADRs (docs/decisions/)
 - **P1 (done)** core: config, wire/transport/client, session bootstrap, identity, channel bootstrap, roster, buffer, delivery — `irc` tool with all 8 ops; wake-on-DM and the flood limiter shipped here, ahead of plan; 97 tests
 - **P2 (done)** robustness: reconnect with backoff + rejoin (107 tests), IRCv3 capabilities — server-time, extended-join, away-notify negotiated via `capabilities.request`; RFC-2812-only servers degrade silently (410 abort); 126 tests
@@ -216,6 +213,7 @@ pi-irc/
   - **desiredNick (56c1c13):** a 433-fallback rename is now visible — `status()` carries `desiredNick` whenever the active nick carries a fallback suffix; identity stays anchored on realname `session=` metadata and the SASL account (the 433 retry pool itself existed since P1).
   - Docs drift: README verified current for v0.4.1 keys (flood control, wake default-deny, `tlsCaFile`); misleading `{short}` templates in tests renamed to `{shortId}`; the tool.test.mjs nesting/help complaints were stale — the file is flat and fake-backed.
   - Battery at close: unit 227/227 + tsc clean.
+- **Field note (2026-11-07, worker comms-preference experiment):** two channel-neutral worker subagents (same cwd, both auto-connected to `#pi-pi-irc` with busy presence and a live 433 suffix on the second) were told to ask their supervisor one question and report back, mechanism unspecified. Both picked `intercom` for ask *and* report, first try; neither sent a single IRC message despite being registered. Takeaways: on one machine the purpose-built bus wins on friction and wake reliability (8 ms delivery vs IRC's default-deny wake trust); pi-irc's agent⇄agent lane is the cross-machine / human-inclusive case. If in-project IRC should compete: project-peer wake trust (account-verified agents in the project channel auto-allowlisted) and supervisor-nick hints in spawn prompts. Also surfaced: subagent sessions register as role `main` (role detection can't distinguish child sessions), and a stale v0.4.1 status line — fixed in this commit.
 
 ### P6 — Ask/Reply RPC, busy presence, wake trust
 
