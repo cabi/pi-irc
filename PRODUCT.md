@@ -308,6 +308,32 @@ pi-irc/
 
 **Validation**: 198/198 unit tests; live two-session catch-up green; `tsc --noEmit` clean.
 
+### P17 — Project-peer wake trust (spec, open)
+
+**Problem.** P15-b made DM wakes default-deny (`delivery.wakeAllowNicks`, empty by default) — the right call against impersonation, but it broke the symmetric case: a *verified peer agent in the same project channel* cannot wake an idle supervisor over IRC. The worker experiments showed the consequence: same-machine traffic migrates entirely to intercom (correct!), but the cross-machine agent⇄agent ask — pi-irc's own lane — dies quietly unless the operator hand-allowlists every child nick, which is unworkable (nicks churn via 433 suffixes, subagents spawn dynamically).
+
+**Trust tier: `delivery.wakeTrust`** (new config key, additive with `wakeAllowNicks`):
+
+- `"none"` (default, current behavior): nobody wakes the session but explicit `wakeAllowNicks` entries.
+- `"project"`: a DM sender qualifies for wake when ALL hold:
+  1. **SASL-verified account** — extended-join (`JOIN` with account parameter, not `*`) proves the peer authenticated to the server; the server admin's registration policy becomes the root of trust;
+  2. **agent metadata** — realname carries the `pi/1 …` fields and `role` is an agent role (humans never wake);
+  3. **same project** — realname `project=` equals the local session's project (project-scoped selectors' P16 rule);
+  4. the peer is currently a member of our project channel (roster-backed, not just claimed metadata).
+- Account knowledge alone is insufficient; metadata alone is insufficient (P15-b: realname is self-declared). The tier is the AND of server-verified identity and project co-membership.
+
+**Mechanics**:
+- Roster keeps the extended-join account per peer (already parsed); `#maybeWake` consults the tier before the quiet-window throttle (WAKE_QUIET_MS still applies — a flood from a trusted peer still cannot spin the session).
+- Waking messages stay DM-only; channel traffic never wakes regardless of trust (unchanged).
+- `status()` reports `wakeTrust` so an agent can tell which plane will actually reach an idle peer.
+- Docs: README gets the operator guidance — `wakeTrust: "project"` presumes you trust the IRC server's registration policy (open-registration servers: don't).
+
+**Also in P17 (small)**:
+- Spawn-prompt convention (docs): supervisors tell children the supervisor nick and project channel up front — kills the discovery step the workers had to burn.
+- Open question, parked: subagent sessions register as role `main` (no host env var distinguishes child sessions today). If the host grows one, `nick` templates gain `{role:"sub"}` for free; no workaround to build.
+
+**Validation plan**: unit tests against the fake server for each tier condition failing independently (anonymous account, human realname, foreign project, non-member, wakeTrust none); live drill on the operator's ergo — session A idle, session B (SASL-registered, same project) sends an ask over IRC DM, A wakes and replies, all inside the RPC timeout; negative control: anonymous nick's DM does not wake.
+
 ## Terms
 
 | Term | Meaning |
