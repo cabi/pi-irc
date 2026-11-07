@@ -1,0 +1,23 @@
+{
+	"$schema": "./node_modules/oxlint/configuration_schema.json",
+	"jsPlugins": [
+		{
+			"name": "anti-slop",
+			"specifier": "oxlint-anti-slop"
+		}
+	],
+	"rules": {
+		"anti-slop/no-chained-type-assertions": "warn",
+		"anti-slop/no-unnecessary-type-widening": "warn",
+		"anti-slop/no-object-parameters": "error",
+		"anti-slop/no-reduce-accumulator-copy": "error",
+		"anti-slop/no-typeof-outside-guards": "warn",
+		"anti-slop/no-meaningless-unknown-aliases": "error",
+		"anti-slop/no-unsafe-dictionary-values": "error",
+		"anti-slop/no-narrowing-after-widening": "error",
+		"anti-slop/require-type-assertion-justification": "warn",
+		"anti-slop/tests-require-given-when-then": "off",
+		"anti-slop/require-logical-blank-lines": "error"
+	},
+	"ignorePatterns": ["tests/fixtures/**", ".pi/**", "scripts/ergo/**"]
+}

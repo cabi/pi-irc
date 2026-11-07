@@ -2,26 +2,22 @@
 	"name": "pi-irc",
 	"version": "0.4.0",
 	"description": "IRC as the communication bus for pi agents and humans: RFC 2812 client-side implementation with background bootstrap, roster, and one lean `irc` tool",
-	"type": "module",
-	"license": "MIT",
 	"keywords": [
+		"agent-communication",
+		"coding-agent",
+		"irc",
 		"pi",
 		"pi-extension",
-		"irc",
-		"rfc2812",
-		"agent-communication",
-		"coding-agent"
+		"rfc2812"
 	],
-	"repository": {
-		"type": "git",
-		"url": "git+ssh://github.com/cabi/pi-irc.git"
-	},
+	"homepage": "https://github.com/cabi/pi-irc#readme",
 	"bugs": {
 		"url": "https://github.com/cabi/pi-irc/issues"
 	},
-	"homepage": "https://github.com/cabi/pi-irc#readme",
-	"engines": {
-		"node": ">=20"
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+ssh://github.com/cabi/pi-irc.git"
 	},
 	"files": [
 		"index.ts",
@@ -30,24 +26,37 @@
 		"README.md",
 		"LICENSE"
 	],
+	"type": "module",
 	"scripts": {
 		"test": "node --test tests/*.test.mjs",
-		"typecheck": "tsc --noEmit"
-	},
-	"pi": {
-		"extensions": [
-			"./index.ts"
-		]
+		"typecheck": "tsc --noEmit",
+		"fmt": "oxfmt",
+		"lint": "oxlint --fix",
+		"check": "npm run fmt && npm run lint && npm run typecheck && npm test",
+		"prepublishOnly": "npm run check"
 	},
 	"devDependencies": {
 		"@earendil-works/pi-ai": "^1.5.0",
 		"@earendil-works/pi-coding-agent": "^1.5.0",
 		"@types/node": "^26.6.6",
 		"jiti": "^2.7.0",
+		"oxfmt": "^0.77.0",
+		"oxlint": "^1.92.0",
+		"oxlint-anti-slop": "^0.4.0",
+		"typebox": "^1.4.5",
 		"typescript": "^7.0.2"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-ai": "*",
+		"@earendil-works/pi-coding-agent": "*",
 		"typebox": "*"
+	},
+	"engines": {
+		"node": ">=20"
+	},
+	"pi": {
+		"extensions": [
+			"./index.ts"
+		]
 	}
 }
