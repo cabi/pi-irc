@@ -278,3 +278,18 @@ test("quiet window: a second qualifying line within 5s does not double-wake", as
 	await sleep(50);
 	assert.equal(wakes.length, 1, "quiet window suppresses the immediate follow-up");
 });
+
+test("attachClassifier upgrades a live session built without one", async () => {
+	const clf = spyClassifier({ ok: true, confidence: 0.9 });
+	const { srv, session } = await boot({}); // no classifier wired at boot
+	const wakes = [];
+	session.on("wake", (w) => wakes.push(w));
+	srv.say(":carol!u@h PRIVMSG #lounge :research ergo history retention");
+	await sleep(50);
+	assert.equal(wakes.length, 0, "before attach: plain line cannot wake");
+	session.attachClassifier(clf.fn);
+	srv.say(":carol!u@h PRIVMSG #lounge :please research ergo history retention");
+	await sleep(50);
+	assert.equal(clf.calls.length, 1, "attached classifier consulted");
+	assert.equal(wakes.length, 1, "after attach: relevant line wakes");
+});

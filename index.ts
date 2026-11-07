@@ -152,6 +152,7 @@ export default function (pi: ExtensionAPI) {
 		booting = IrcSession.connect(config, identityFrom(ctx.cwd, sid), { classifier })
 			.then((s) => {
 				session = s;
+				if (classifier && !s.classifier) s.attachClassifier(classifier);
 				// Wake steer (DM or channel): hand the line to the agent so it
 				// answers humans/peers without polling.
 				s.on("wake", (w) => {
@@ -181,6 +182,8 @@ export default function (pi: ExtensionAPI) {
 		const registry = (ctx as unknown as { modelRegistry?: ModelRegistryLike }).modelRegistry;
 		if (registry && config.delivery.wakeOnChannel) {
 			classifier = makeChannelClassifier(registry, config.delivery.wakeOnChannel.classifier);
+			// Live sessions (kept across /reload) gain the classifier in place.
+			session?.attachClassifier(classifier);
 		}
 
 		// `reload` re-fires session_start for the same session: keep the

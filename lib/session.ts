@@ -182,8 +182,15 @@ export class IrcSession extends EventEmitter {
 	readonly buffer: MessageBuffer;
 	readonly delivery: DeliveryQueue;
 	private readonly now: () => number;
-	/** P18: optional classifier for channel wakes (see SessionDeps). */
-	readonly classifier?: ChannelClassifier;
+	/** P18: optional classifier for channel wakes (see SessionDeps);
+	 * attachable on a live session via `attachClassifier` (config hot-reload). */
+	classifier?: ChannelClassifier;
+
+	/** P18: attach (or replace) the classifier of a live session — used when
+	 * `/reload` gains a `wakeOnChannel` config the session was built without. */
+	attachClassifier(classifier: ChannelClassifier): void {
+		this.classifier = classifier;
+	}
 	readonly #reconnect: ReconnectSpec | null;
 	readonly #backoff: Backoff;
 	#cancelScheduled: (() => void) | null = null;
