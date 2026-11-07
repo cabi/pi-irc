@@ -51,7 +51,6 @@ export interface ChannelsConfig {
 	kickRejoinDelayMs: number;
 }
 
-
 export interface CapabilitiesConfig {
 	/** IRCv3 capabilities to request during registration. */
 	request: string[];
@@ -120,7 +119,7 @@ export class ConfigError extends Error {
 
 const DEFAULTS = {
 	server: { port: 6697, tls: true },
-		nick: { template: "pi-{role}-{shortId}", maxLen: 30 },
+	nick: { template: "pi-{role}-{shortId}", maxLen: 30 },
 	channels: {
 		projectTemplate: "#pi-{slug}",
 		defaults: [] as string[],
@@ -146,7 +145,9 @@ const DEFAULTS = {
 };
 
 export const GLOBAL_CONFIG_FILE = "pi-irc.json";
+
 const CHANNEL_NAME = /^[#&][^\s,]+$/;
+
 const SLUG = /^[a-z0-9][a-z0-9-]*$/;
 
 /** Directory name → config slug: lowercase, `[a-z0-9-]`, collapsed, ≤20 chars. */
@@ -157,6 +158,7 @@ export function projectSlug(dirName: string): string {
 		.replace(/^-+|-+$/g, "")
 		.slice(0, 20)
 		.replace(/-+$/, "");
+
 	return slug || "project";
 }
 
@@ -170,74 +172,96 @@ type Json = Record<string, unknown>;
  */
 function stripJsonc(text: string): string {
 	const noComments = stripComments(text);
+
 	return stripTrailingCommas(noComments);
 }
 
 function stripComments(text: string): string {
 	let out = "";
 	let inString = false;
+
 	for (let i = 0; i < text.length; i++) {
 		const ch = text[i];
+
 		if (inString) {
 			out += ch;
+
 			if (ch === "\\") i++; // escaped char (e.g. \" or \\)
 			else if (ch === '"') inString = false;
 			continue;
 		}
+
 		if (ch === '"') {
 			inString = true;
 			out += ch;
 			continue;
 		}
+
 		if (ch === "/" && text[i + 1] === "/") {
 			while (i < text.length && text[i] !== "\n") i++;
 			continue; // keep the newline itself
 		}
+
 		if (ch === "/" && text[i + 1] === "*") {
 			i += 2;
+
 			while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i++;
 			i++; // consume the trailing slash
 			continue;
 		}
+
 		out += ch;
 	}
+
 	return out;
 }
 
 function stripTrailingCommas(text: string): string {
 	let out = "";
 	let inString = false;
+
 	for (let i = 0; i < text.length; i++) {
 		const ch = text[i];
+
 		if (inString) {
 			out += ch;
+
 			if (ch === "\\") i++;
 			else if (ch === '"') inString = false;
 			continue;
 		}
+
 		if (ch === '"') {
 			inString = true;
 			out += ch;
 			continue;
 		}
+
 		if (ch === ",") {
 			let j = i + 1;
+
 			while (j < text.length && /\s/.test(text[j])) j++;
+
 			if (j >= text.length || text[j] === "}" || text[j] === "]") continue;
 		}
+
 		out += ch;
 	}
+
 	return out;
 }
 
 function readJson(file: string, label: string): Json {
 	let raw: string;
+
 	try {
 		raw = fs.readFileSync(file, "utf8");
 	} catch {
 		throw new ConfigError(label, "file is not readable");
 	}
+
 	let parsed: unknown;
+
 	try {
 		parsed = JSON.parse(raw);
 	} catch {
@@ -250,9 +274,11 @@ function readJson(file: string, label: string): Json {
 			throw new ConfigError(label, `invalid JSON (${(e as Error).message})`);
 		}
 	}
+
 	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
 		throw new ConfigError(label, "expected a JSON object");
 	}
+
 	return parsed as Json;
 }
 
@@ -260,6 +286,7 @@ function str(obj: Json, key: string, value: unknown): string {
 	if (typeof value !== "string" || value.length === 0) {
 		throw new ConfigError(key, "expected a non-empty string");
 	}
+
 	return value;
 }
 
@@ -267,21 +294,26 @@ function int(obj: Json, key: string, value: unknown, min: number, max: number): 
 	if (!Number.isInteger(value) || (value as number) < min || (value as number) > max) {
 		throw new ConfigError(key, `expected an integer ${min}–${max}`);
 	}
+
 	return value as number;
 }
 
 function bool(obj: Json, key: string, value: unknown): boolean {
 	if (typeof value !== "boolean") throw new ConfigError(key, "expected a boolean");
+
 	return value;
 }
 
 function channelList(key: string, value: unknown): string[] {
 	if (!Array.isArray(value)) throw new ConfigError(key, "expected an array of channel names");
+
 	return value.map((v, i) => {
 		const name = str({} as Json, `${key}[${i}]`, v);
+
 		if (!CHANNEL_NAME.test(name) || name.length > 200) {
 			throw new ConfigError(`${key}[${i}]`, `not a valid channel name: ${JSON.stringify(name)}`);
 		}
+
 		return name;
 	});
 }
@@ -289,8 +321,10 @@ function channelList(key: string, value: unknown): string[] {
 /** List of plain non-empty strings, no channel-name syntax imposed. */
 function strList(key: string, value: unknown): string[] {
 	if (!Array.isArray(value)) throw new ConfigError(key, "expected an array of strings");
+
 	return value.map((v, i) => str({} as Json, `${key}[${i}]`, v));
 }
+
 /**
  * Loads and validates the merged configuration.
  * Returns `null` when the global config file does not exist (extension disabled).
@@ -304,10 +338,12 @@ export function loadConfig(opts: {
 	projectDir?: string;
 }): PiIrcConfig | null {
 	const globalFile = opts.globalPath;
+
 	if (!fs.existsSync(globalFile)) return null;
 
 	const global = readJson(globalFile, "global config");
 	let project: Json = {};
+
 	if (opts.projectPath && fs.existsSync(opts.projectPath)) {
 		project = readJson(opts.projectPath, "project config");
 	}
@@ -320,29 +356,37 @@ export function loadConfig(opts: {
 	// catch-up (channels, capabilities, history, slug).
 	const PROJECT_ALLOWED = new Set(["channels", "capabilities", "history"]);
 	const merged: Json = {};
+
 	for (const section of ["server", "nick", "channels", "capabilities", "delivery", "history"] as const) {
 		const g = global[section];
 		const p = project[section];
+
 		if (g !== undefined && (typeof g !== "object" || g === null || Array.isArray(g))) {
 			throw new ConfigError(section, "expected an object");
 		}
+
 		if (p !== undefined && (typeof p !== "object" || p === null || Array.isArray(p))) {
 			throw new ConfigError(section, "expected an object");
 		}
+
 		if (p !== undefined && !PROJECT_ALLOWED.has(section)) {
 			console.warn(`pi-irc: ignoring "${section}" in project config — admin-owned, set it in the global config`);
 			merged[section] = { ...(g as Json | undefined) };
 			continue;
 		}
+
 		merged[section] = { ...(g as Json | undefined), ...(p as Json | undefined) };
 	}
+
 	// auth was never part of the merge (a P14 finding): it is global-only.
 	if (global.auth !== undefined) {
 		if (typeof global.auth !== "object" || global.auth === null || Array.isArray(global.auth)) {
 			throw new ConfigError("auth", "expected an object");
 		}
+
 		merged.auth = global.auth as Json;
 	}
+
 	if (project.auth !== undefined) {
 		console.warn('pi-irc: ignoring "auth" in project config — admin-owned, set it in the global config');
 	}
@@ -353,42 +397,52 @@ export function loadConfig(opts: {
 	const capabilities = merged.capabilities as Json;
 	const delivery = merged.delivery as Json;
 	const history = merged.history as Json;
+
 	const historyCatchup =
 		history.catchupLimit !== undefined
 			? int(history, "history.catchupLimit", history.catchupLimit, 0, 1000)
 			: DEFAULTS.history.catchupLimit;
+
 	const host = server.host !== undefined ? str(server, "server.host", server.host) : undefined;
+
 	if (host === undefined) {
 		throw new ConfigError("server.host", "required and admin-owned (set it in the global config)");
 	}
 
 	const passwordEnv =
 		server.passwordEnv !== undefined ? str(server, "server.passwordEnv", server.passwordEnv) : undefined;
+
 	const tlsInsecure =
 		server.tlsInsecure !== undefined ? bool(server, "server.tlsInsecure", server.tlsInsecure) : undefined;
+
 	const tlsServerName =
 		server.tlsServerName !== undefined ? str(server, "server.tlsServerName", server.tlsServerName) : undefined;
-	const tlsCaFile =
-		server.tlsCaFile !== undefined ? str(server, "server.tlsCaFile", server.tlsCaFile) : undefined;
+
+	const tlsCaFile = server.tlsCaFile !== undefined ? str(server, "server.tlsCaFile", server.tlsCaFile) : undefined;
+
 	if (tlsCaFile !== undefined && tlsInsecure) {
 		throw new ConfigError("server.tlsCaFile", "set either tlsCaFile (verify) or tlsInsecure (skip) — not both");
 	}
 
 	let auth: AuthConfig | undefined;
 	const authRaw = merged.auth as Json | undefined;
+
 	if (authRaw !== undefined) {
-		const password =
-			authRaw.password !== undefined ? str(authRaw, "auth.password", authRaw.password) : undefined;
+		const password = authRaw.password !== undefined ? str(authRaw, "auth.password", authRaw.password) : undefined;
+
 		const authPasswordEnv =
 			authRaw.passwordEnv !== undefined ? str(authRaw, "auth.passwordEnv", authRaw.passwordEnv) : undefined;
+
 		if ((password !== undefined) === (authPasswordEnv !== undefined)) {
 			throw new ConfigError("auth", "set exactly one of auth.password or auth.passwordEnv");
 		}
+
 		auth = {
 			username: str(authRaw, "auth.username", authRaw.username),
 			...(password !== undefined ? { password } : { passwordEnv: authPasswordEnv }),
 		};
 	}
+
 	const config: PiIrcConfig = {
 		server: {
 			host,
@@ -411,16 +465,8 @@ export function loadConfig(opts: {
 				channels.projectTemplate ?? DEFAULTS.channels.projectTemplate,
 			),
 			defaults: channelList("channels.defaults", channels.defaults ?? DEFAULTS.channels.defaults),
-			autoCreate: bool(
-				channels,
-				"channels.autoCreate",
-				channels.autoCreate ?? DEFAULTS.channels.autoCreate,
-			),
-			topicTemplate: str(
-				channels,
-				"channels.topicTemplate",
-				channels.topicTemplate ?? DEFAULTS.channels.topicTemplate,
-			),
+			autoCreate: bool(channels, "channels.autoCreate", channels.autoCreate ?? DEFAULTS.channels.autoCreate),
+			topicTemplate: str(channels, "channels.topicTemplate", channels.topicTemplate ?? DEFAULTS.channels.topicTemplate),
 			kickRejoinDelayMs: int(
 				channels,
 				"channels.kickRejoinDelayMs",
@@ -430,18 +476,13 @@ export function loadConfig(opts: {
 			),
 		},
 		capabilities: {
-			request: capabilities.request !== undefined
-				? strList("capabilities.request", capabilities.request)
-				: DEFAULTS.capabilities.request,
+			request:
+				capabilities.request !== undefined
+					? strList("capabilities.request", capabilities.request)
+					: DEFAULTS.capabilities.request,
 		},
 		delivery: {
-			bufferMax: int(
-				delivery,
-				"delivery.bufferMax",
-				delivery.bufferMax ?? DEFAULTS.delivery.bufferMax,
-				1,
-				100_000,
-			),
+			bufferMax: int(delivery, "delivery.bufferMax", delivery.bufferMax ?? DEFAULTS.delivery.bufferMax, 1, 100_000),
 			burst: int(delivery, "delivery.burst", delivery.burst ?? DEFAULTS.delivery.burst, 1, 100),
 			intervalMs: int(
 				delivery,
@@ -450,13 +491,7 @@ export function loadConfig(opts: {
 				100,
 				60_000,
 			),
-			maxQueue: int(
-				delivery,
-				"delivery.maxQueue",
-				delivery.maxQueue ?? DEFAULTS.delivery.maxQueue,
-				1,
-				100_000,
-			),
+			maxQueue: int(delivery, "delivery.maxQueue", delivery.maxQueue ?? DEFAULTS.delivery.maxQueue, 1, 100_000),
 			wakeOnDirectMessage: bool(
 				delivery,
 				"delivery.wakeOnDirectMessage",

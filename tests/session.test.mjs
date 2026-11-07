@@ -7,7 +7,9 @@ import { EventEmitter } from "node:events";
 import { loadViaPi, repoFile } from "./helpers.mjs";
 
 const { IrcSession } = await loadViaPi(repoFile("lib", "session.ts"));
+
 const { IrcClient } = await loadViaPi(repoFile("lib", "irc-client.ts"));
+
 const { wire } = await loadViaPi(repoFile("lib", "wire.ts"));
 
 /**
@@ -40,18 +42,25 @@ class FakeServer extends EventEmitter {
 	#flush() {
 		const pending = this.#answers;
 		this.#answers = [];
+
 		for (const a of pending) queueMicrotask(a);
 	}
 
 	#autoAnswer(line) {
 		if (!this.#client) return;
 		const m = /^(\S+)(?:\s+(.*))?$/.exec(line);
+
 		if (!m) return;
 		const [, cmd, rest = ""] = m;
 		const me = this.#client.nick;
+
 		switch (cmd) {
 			case "JOIN": {
-				const chans = rest.split(",").map((c) => c.trim()).filter(Boolean);
+				const chans = rest
+					.split(",")
+					.map((c) => c.trim())
+					.filter(Boolean);
+
 				for (const chan of chans) {
 					this.say(`:${me}!pi@h JOIN ${chan}`);
 					this.say(`:srv 331 ${me} ${chan} :No topic is set`);
@@ -63,22 +72,22 @@ class FakeServer extends EventEmitter {
 					this.say(`:srv 354 ${me} u h anon * 0 :Mystery`);
 					this.say(`:srv 315 ${me} ${chan} :End of WHO list`);
 				}
+
 				break;
 			}
+
 			case "TOPIC": {
 				// Query form: 331 or 332 depending on fixture state.
-				this.say(
-					this.topic
-						? `:srv 332 ${me} ${rest} :${this.topic}`
-						: `:srv 331 ${me} ${rest} :No topic is set`,
-				);
+				this.say(this.topic ? `:srv 332 ${me} ${rest} :${this.topic}` : `:srv 331 ${me} ${rest} :No topic is set`);
 				break;
 			}
+
 			case "WHO": {
 				const mask = rest.split(" ")[0];
 				this.say(`:srv 315 ${me} ${mask} :End of WHO list`);
 				break;
 			}
+
 			default:
 				break;
 		}
@@ -99,7 +108,13 @@ function makeConfig(over = {}) {
 	return {
 		server: { host: "irc.example", port: 6667, tls: false },
 		nick: { template: "pi-{role}-{shortId}", maxLen: 30 },
-		channels: { projectTemplate: "#pi-{slug}", defaults: [], autoCreate: true, topicTemplate: "pi {slug} — {date}", ...over },
+		channels: {
+			projectTemplate: "#pi-{slug}",
+			defaults: [],
+			autoCreate: true,
+			topicTemplate: "pi {slug} — {date}",
+			...over,
+		},
 		capabilities: { request: [] },
 		delivery: { bufferMax: 50, wakeOnDirectMessage: true, chunkLongSends: true },
 		projectSlug: "proj",
@@ -118,25 +133,26 @@ const ident = {
  * guarantee a live socket gives).
  */
 async function boot(over = {}, srv = new FakeServer()) {
-	const client = new IrcClient(
-		{ nick: "pi-main-s1", username: "pi", realname: "pi-agent:main:proj:s1" },
-		srv,
-	);
+	const client = new IrcClient({ nick: "pi-main-s1", username: "pi", realname: "pi-agent:main:proj:s1" }, srv);
 	srv.bind(client);
 	client.startRegistration();
 	srv.say(":srv 001 pi-main-s1 :Welcome");
 	const pending = IrcSession.connect(makeConfig(over), ident, { client });
 	srv.say(":srv 376 pi-main-s1 :End of MOTD");
 	const session = await pending;
+
 	return { srv, client, session };
 }
 
 test("connect: joins project channel, stamps topic, seeds roster", async () => {
 	const { srv, session } = await boot();
 	assert.equal(session.projectChannel, "#pi-proj");
-	assert.ok(srv.lines.some((l) => l === "JOIN #pi-proj"), "JOIN sent");
+	assert.ok(
+		srv.lines.some((l) => l === "JOIN #pi-proj"),
+		"JOIN sent",
+	);
 	// 331 (no topic) + autoCreate → topic stamp sent with slug and date.
-	const stamp = srv.lines.find((l) => /^TOPIC #pi-proj :pi proj/.test(l));
+	const stamp = srv.lines.find((l) => l.startsWith("TOPIC #pi-proj :pi proj"));
 	assert.ok(stamp, "TOPIC sent");
 	assert.match(stamp, /pi proj — \d{4}-\d{2}-\d{2}$/);
 	// Roster seeded from NAMES + WHO.
@@ -156,7 +172,7 @@ test("connect: no topic stamp when a topic exists", async () => {
 	const srv = new FakeServer();
 	srv.topic = "pre-existing topic";
 	const { session } = await boot({}, srv);
-	assert.ok(!srv.lines.some((l) => /^TOPIC #pi-proj :/.test(l)), "no topic SET when one exists");
+	assert.ok(!srv.lines.some((l) => l.startsWith("TOPIC #pi-proj :")), "no topic SET when one exists");
 	assert.equal(session.channels.get("#pi-proj").topic, "pre-existing topic");
 	session.stop();
 });
@@ -175,19 +191,18 @@ test("connect: join failure rejects", async () => {
 	// Sabotage the auto-answer: JOIN → 403 NoSuchChannel.
 	srv.send = (line) => {
 		srv.lines.push(line);
+
 		if (line.startsWith("JOIN")) {
 			const chan = line.slice(5);
 			queueMicrotask(() => srv.emit("line", `:srv 403 pi-main-s1 ${chan} :No such channel`));
 		}
 	};
+
 	client.startRegistration();
 	srv.say(":srv 001 pi-main-s1 :Welcome");
 	const pending = IrcSession.connect(makeConfig(), ident, { client });
 	srv.say(":srv 376 pi-main-s1 :End of MOTD");
-	await assert.rejects(
-		() => pending,
-		/No such channel/,
-	);
+	await assert.rejects(() => pending, /No such channel/);
 });
 
 test("privmsg routing: channel vs DM, wake only on DM", async () => {
@@ -219,7 +234,10 @@ test("wake trust is default-deny: only services accounts or allowlist globs wake
 	const { srv, session } = await boot();
 	let wakes = 0;
 	const woken = [];
-	session.on("wake", (e) => { wakes++; woken.push(e.from); });
+	session.on("wake", (e) => {
+		wakes++;
+		woken.push(e.from);
+	});
 
 	// mallory forges agent metadata but holds no services account ("*").
 	srv.say(":mallory!u@h JOIN #pi-proj * :pi-agent project=pi-proj role=main session=666");
@@ -235,8 +253,14 @@ test("wake trust is default-deny: only services accounts or allowlist globs wake
 	assert.deepEqual(woken, ["hank42"]);
 	const msgs = session.read({ limit: 100 });
 	const sys = msgs.filter((m) => m.kind === "system");
-	assert.ok(sys.some((m) => m.from === "mallory" && /not wake-trusted/.test(m.text)), "untrusted DM marked");
-	assert.ok(msgs.some((m) => m.kind !== "system" && m.from === "mallory" && /pi-ask x1/.test(m.text)), "untrusted DM still buffered verbatim");
+	assert.ok(
+		sys.some((m) => m.from === "mallory" && /not wake-trusted/.test(m.text)),
+		"untrusted DM marked",
+	);
+	assert.ok(
+		msgs.some((m) => m.kind !== "system" && m.from === "mallory" && /pi-ask x1/.test(m.text)),
+		"untrusted DM still buffered verbatim",
+	);
 	assert.ok(!sys.some((m) => m.from === "hank42"), "trusted sender got no system line");
 	session.stop();
 });
@@ -311,7 +335,11 @@ test("P16: role/@session selectors never cross project lines", async () => {
 	await tick(20);
 	assert.ok(session.roster.get("pi-main-beef00"), "foreign agent on roster");
 	assert.throws(() => session.resolveTarget("main"), /no main agent/, "foreign main is invisible to role selectors");
-	assert.throws(() => session.resolveTarget("@beef"), /no agent session/, "foreign session id is invisible to @selectors");
+	assert.throws(
+		() => session.resolveTarget("@beef"),
+		/no agent session/,
+		"foreign session id is invisible to @selectors",
+	);
 	// Raw nick still reaches them — that is the documented cross-project path.
 	assert.equal(session.resolveTarget("pi-main-beef00"), "pi-main-beef00");
 	session.stop();
@@ -320,13 +348,22 @@ test("P16: role/@session selectors never cross project lines", async () => {
 test("P16: foreign joins batch into one WHO flush, deduped per nick", async () => {
 	const { srv, session } = await boot();
 	const mark = srv.lines.length;
+
 	// Five foreign joins without realname (RFC 2812 style), one nick twice.
 	for (const n of ["u1", "u2", "u3", "u4", "u2"]) srv.say(`:${n}!u@h JOIN #pi-proj`);
 	await tick(30); // way below the 500 ms flush window
-	assert.equal(srv.lines.slice(mark).filter((l) => l.startsWith("WHO")).length, 0, "no WHO fired during the batch window");
+	assert.equal(
+		srv.lines.slice(mark).filter((l) => l.startsWith("WHO")).length,
+		0,
+		"no WHO fired during the batch window",
+	);
 	await tick(600); // flush elapsed
 	const whos = srv.lines.slice(mark).filter((l) => l.startsWith("WHO"));
-	assert.deepEqual(whos.map((l) => l.slice(4).split(" ")[0]), ["u1", "u2", "u3", "u4"], "one flush, deduped, WHOX form");
+	assert.deepEqual(
+		whos.map((l) => l.slice(4).split(" ")[0]),
+		["u1", "u2", "u3", "u4"],
+		"one flush, deduped, WHOX form",
+	);
 	session.stop();
 });
 
@@ -335,6 +372,7 @@ test("P16: msgid dedup evicts oldest instead of wiping the window", async () => 
 	// 1 + 8000 distinct msgids pushes "oldest" out of the 8000-entry ring;
 	// the most recent ones must still dedup a replay/live overlap.
 	srv.say("@msgid=oldest :carol!u@h PRIVMSG pi-main-s1 :seed");
+
 	for (let i = 0; i < 8_000; i++) srv.say(`@msgid=m${i} :carol!u@h PRIVMSG pi-main-s1 :fill-${i}`);
 	// After eviction: oldest repeats (window edge moved), m7999 still dedups.
 	srv.say("@msgid=oldest :carol!u@h PRIVMSG pi-main-s1 :dup-evicted");
@@ -342,6 +380,7 @@ test("P16: msgid dedup evicts oldest instead of wiping the window", async () => 
 	const texts = session.read({ conv: "carol", limit: 10_000 }).map((m) => m.text);
 	assert.ok(!texts.includes("dup-recent"), "recent msgid still deduped after 8000 inserts");
 	assert.ok(texts.includes("dup-evicted"), "the evicted oldest msgid is delivered once more — ring edge, not a wipe");
+
 	// bufferMax 50 keeps only the tail of the fill; each survivor delivered once.
 	for (const t of ["fill-7999", "fill-7998"]) assert.equal(texts.filter((x) => x === t).length, 1, `${t} exactly once`);
 	session.stop();

@@ -3,23 +3,21 @@ import { test } from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const {
-	parseEnvelope,
-	formatAsk,
-	formatReply,
-	envelopeParts,
-	ReplyAssembler,
-	AskRegistry,
-} = await jiti.import("../lib/rpc.ts");
+
+const { parseEnvelope, formatAsk, formatReply, envelopeParts, ReplyAssembler, AskRegistry } =
+	await jiti.import("../lib/rpc.ts");
 
 test("parseEnvelope: ask with timeout", () => {
 	const env = parseEnvelope("[pi-ask a1b2c3d4 timeout=600] Which API?");
-	assert.deepEqual({ kind: env.kind, id: env.id, timeoutSec: env.timeoutSec, body: env.body }, {
-		kind: "ask",
-		id: "a1b2c3d4",
-		timeoutSec: 600,
-		body: "Which API?",
-	});
+	assert.deepEqual(
+		{ kind: env.kind, id: env.id, timeoutSec: env.timeoutSec, body: env.body },
+		{
+			kind: "ask",
+			id: "a1b2c3d4",
+			timeoutSec: 600,
+			body: "Which API?",
+		},
+	);
 });
 
 test("parseEnvelope: ask without timeout", () => {
@@ -62,11 +60,12 @@ test("envelopeParts: short body is one message without part marker", () => {
 });
 
 test("envelopeParts: long reply chunks with markers, all under maxChunk, reassembles", () => {
-	const body = ("word ".repeat(400)).trim(); // ~2000 chars
+	const body = "word ".repeat(400).trim(); // ~2000 chars
 	const parts = envelopeParts("reply", "a1b2c3d4", body, 400);
 	assert.ok(parts.length >= 5, `expected >=5 parts, got ${parts.length}`);
 	const assembler = new ReplyAssembler();
 	let joined = null;
+
 	for (const p of parts) {
 		const env = parseEnvelope(p);
 		assert.ok(env, "every part must parse");
@@ -74,11 +73,13 @@ test("envelopeParts: long reply chunks with markers, all under maxChunk, reassem
 		assert.equal(env.part.n, parts.length);
 		joined = assembler.add("peer", env.id, env.part, env.body) ?? joined;
 	}
+
 	assert.equal(joined, body);
 });
 
 test("envelopeParts: ask carries timeout on every part", () => {
 	const parts = envelopeParts("ask", "a1b2c3d4", "x".repeat(900), 400, 30);
+
 	for (const p of parts) {
 		const env = parseEnvelope(p);
 		assert.equal(env.kind, "ask");
@@ -101,16 +102,19 @@ test("ReplyAssembler: single-part reply passes through", () => {
 
 function fakeTimers() {
 	const timers = [];
+
 	return {
 		timers,
 		setTimer: (ms, fn) => {
 			const handle = { ms, fn, fired: false };
 			timers.push(handle);
+
 			return handle;
 		},
 		clearTimer: (h) => {
 			h.fired = true;
 			const i = timers.indexOf(h);
+
 			if (i >= 0) timers.splice(i, 1);
 		},
 		fire: (h) => h.fn(),
@@ -119,6 +123,7 @@ function fakeTimers() {
 
 function fakeClock() {
 	let t = 1000;
+
 	return { now: () => t, advance: (ms) => (t += ms) };
 }
 
@@ -168,13 +173,25 @@ test("AskRegistry: inbound lifecycle", () => {
 
 test("AskRegistry: list returns newest first in both directions", () => {
 	const clock = fakeClock();
-	const reg = new AskRegistry({ now: clock.now, idGen: (() => { let n = 0; return () => `id${++n}`; })() });
+
+	const reg = new AskRegistry({
+		now: clock.now,
+		idGen: (() => {
+			let n = 0;
+
+			return () => `id${++n}`;
+		})(),
+	});
+
 	reg.trackOutbound("a", "q1", 1000);
 	clock.advance(10);
 	reg.trackOutbound("b", "q2", 1000);
 	reg.trackInbound("x1", "c", "in1");
 	const { outbound } = reg.list(10);
-	assert.deepEqual(outbound.map((o) => o.id), ["id2", "id1"]);
+	assert.deepEqual(
+		outbound.map((o) => o.id),
+		["id2", "id1"],
+	);
 });
 
 test("resolveReply: a reply from anyone but the asked peer is foreign text", () => {
@@ -196,16 +213,20 @@ test("dispose(): waiting asks settle as disposed, not hang", async () => {
 
 test("registry caps: finished records evict at 256, waiting asks never", () => {
 	const reg = new AskRegistry({ idGen: () => Math.random().toString(16).slice(2, 10) });
+
 	for (let k = 0; k < 300; k++) {
 		reg.trackInbound(`i${k}`, "p", `q${k}`);
 		reg.resolveInbound(`i${k}`, "a");
 	}
+
 	assert.ok(reg.list(1000).inbound.length <= 256, `capped: ${reg.list(1000).inbound.length}`);
 	const { id } = reg.trackOutbound("p", "q", 60_000);
+
 	for (let k = 300; k < 400; k++) {
 		reg.trackInbound(`i${k}`, "p", `q${k}`);
 		reg.resolveInbound(`i${k}`, "a");
 	}
+
 	assert.equal(reg.resolveReply(id, "late-but-live", "p"), true, "waiting ask survived eviction pressure");
 	reg.dispose();
 });
@@ -221,11 +242,13 @@ test("ReplyAssembler: same id from two senders never interleaves", () => {
 test("ReplyAssembler: stale fragments expire (TTL) and floods evict (maxPending)", () => {
 	let now = 1_000_000;
 	const a = new ReplyAssembler({ now: () => now, ttlMs: 1000, maxPending: 4 });
+
 	for (let k = 0; k < 3; k++) a.add("f", `id${k}`, { i: 1, n: 99 }, "x");
 	assert.equal(a.pendingCount(), 3);
 	now += 5000; // past TTL
 	a.add("f", "fresh", { i: 1, n: 99 }, "x");
 	assert.equal(a.pendingCount(), 1, `swept stale: ${a.pendingCount()}`);
+
 	for (let k = 0; k < 6; k++) a.add("f", `fl${k}`, { i: 1, n: 99 }, "x");
 	assert.equal(a.pendingCount(), 4, `bounded: ${a.pendingCount()}`);
 });

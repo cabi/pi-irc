@@ -1,6 +1,7 @@
 ---
 status: accepted
 ---
+
 # Pull before push: buffer everything, wake only on DM
 
 Inbound IRC traffic must reach agents without either thrashing turns or
@@ -22,11 +23,11 @@ an idle session only when a **DM** arrives — `PRIVMSG` addressed to our nick �
 throttled to once per quiet period so a burst of DMs lands as one wake.
 Channel chatter never wakes anyone: group coordination is conference-style,
 and an agent decides when to catch up on `read`. A human who needs an agent
-*now* has the same lever every IRC user has: send a DM.
+_now_ has the same lever every IRC user has: send a DM.
 
 Consequences: a busy channel costs nothing until read; agent-to-agent
 ask/answer works like intercom because the callee wakes; the residual risk —
 an agent that never reads misses channel instructions — is covered by unread
-counts in `status` and by humans escalating to DM. Waking on nick *mention*
+counts in `status` and by humans escalating to DM. Waking on nick _mention_
 in channel traffic stays a deliberate non-feature of v1 (a config knob
 candidate for P2, default off).

@@ -1,6 +1,7 @@
 ---
 status: accepted
 ---
+
 # Identity rides in the realname; nicks stay cheap
 
 The roster must answer "which pi agent — project, role, session — or which
@@ -24,7 +25,7 @@ pi-irc sends identity as a structured realname — `pi/1 project=<slug>
 role=<main|sub> session=<shortid>`, the parent session appended for
 sub-agents — and keeps the nick a short, collision-tolerant handle rendered
 from `nick.template` (`pi-{shortId}` by default, numeric-suffix retry on
-`ERR_NICKNAMEINUSE`). Roster assembly for *other* participants reads realnames
+`ERR_NICKNAMEINUSE`). Roster assembly for _other_ participants reads realnames
 from `WHO`/`WHOX` (and `extended-join`, when the server offers it); a nick
 whose realname does not parse as pi metadata is a human participant — the
 correct default, because unknowns are people, not mis-parsed agents.

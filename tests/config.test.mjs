@@ -7,9 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { loadViaPi, repoFile } from "./helpers.mjs";
 
-const { loadConfig, projectSlug, renderChannelName, ConfigError } = await loadViaPi(
-	repoFile("lib", "config.ts"),
-);
+const { loadConfig, projectSlug, renderChannelName, ConfigError } = await loadViaPi(repoFile("lib", "config.ts"));
 
 function tmpDir() {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "pi-irc-cfg-"));
@@ -19,9 +17,9 @@ function writeConfig(dir, name, json) {
 	const file = path.join(dir, name);
 	fs.mkdirSync(path.dirname(file), { recursive: true });
 	fs.writeFileSync(file, JSON.stringify(json));
+
 	return file;
 }
-
 
 function expectConfigError(fn, key) {
 	try {
@@ -29,10 +27,13 @@ function expectConfigError(fn, key) {
 	} catch (e) {
 		assert.ok(e instanceof ConfigError, `expected ConfigError for ${key}, got: ${e}`);
 		assert.equal(e.key, key, `error names the wrong key for ${key}`);
+
 		return;
 	}
+
 	assert.fail(`expected ConfigError for ${key}, but loadConfig returned`);
 }
+
 test("missing global config disables the extension (null)", () => {
 	const dir = tmpDir();
 	assert.equal(loadConfig({ globalPath: path.join(dir, "pi-irc.json") }), null);
@@ -44,14 +45,17 @@ test("project server override is ignored — the global file owns the identity",
 	const projectPath = writeConfig(dir, "project/.pi/pi-irc.json", { server: { host: "irc.test" } });
 	// No host from the (only trusted) global file → loud ConfigError, not a
 	// silent connection to a repo-chosen server.
-	expectConfigError(() => loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "project") }), "server.host");
+	expectConfigError(
+		() => loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "project") }),
+		"server.host",
+	);
 });
 
 test("defaults land where files are silent", () => {
 	const dir = tmpDir();
 	const globalPath = writeConfig(dir, "global.json", { server: { host: "irc.example.net" } });
 	const cfg = loadConfig({ globalPath, projectDir: "/work/My_Project" });
-		assert.equal(cfg.nick.template, "pi-{role}-{shortId}");
+	assert.equal(cfg.nick.template, "pi-{role}-{shortId}");
 	assert.equal(cfg.nick.maxLen, 30);
 	assert.equal(cfg.channels.projectTemplate, "#pi-{slug}");
 	assert.deepEqual(cfg.channels.defaults, []);
@@ -64,14 +68,17 @@ test("defaults land where files are silent", () => {
 
 test("project section overrides global where allowed; defaults arrays replace, not concat", () => {
 	const dir = tmpDir();
+
 	const globalPath = writeConfig(dir, "global.json", {
 		server: { host: "irc.example.net", port: 6667 },
 		channels: { defaults: ["#pi-lobby"] },
 	});
+
 	const projectPath = writeConfig(dir, "project/.pi/pi-irc.json", {
 		server: { port: 6697 },
 		channels: { defaults: ["#pi-project-ops"] },
 	});
+
 	const cfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "project") });
 	assert.equal(cfg.server.host, "irc.example.net");
 	// server is global-only now: the project's port override is ignored.
@@ -81,18 +88,21 @@ test("project section overrides global where allowed; defaults arrays replace, n
 
 test("trust boundary: project file cannot set server, auth, nick, or delivery", () => {
 	const dir = tmpDir();
+
 	const globalPath = writeConfig(dir, "global.json", {
 		server: { host: "irc.example.net", port: 6667, passwordEnv: "IRC_PASS", tlsInsecure: false },
 		auth: { username: "agent", passwordEnv: "IRC_PASS" },
 		nick: { template: "pi-{role}-{shortId}" },
 		delivery: { bufferMax: 100, wakeAllowNicks: ["admin"] },
 	});
+
 	const projectPath = writeConfig(dir, "project/.pi/pi-irc.json", {
 		server: { host: "evil.example", passwordEnv: "ATTACKER_VAR", tlsInsecure: true },
 		auth: { username: "evil", password: "stolen" },
 		nick: { template: "evil-{shortId}" },
 		delivery: { bufferMax: 1, wakeAllowNicks: ["*"] },
 	});
+
 	const cfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "project") });
 	assert.equal(cfg.server.host, "irc.example.net");
 	assert.equal(cfg.server.passwordEnv, "IRC_PASS");
@@ -106,10 +116,12 @@ test("trust boundary: project file cannot set server, auth, nick, or delivery", 
 
 test("global auth reaches the config (was silently dropped by the merge)", () => {
 	const dir = tmpDir();
+
 	const globalPath = writeConfig(dir, "global.json", {
 		server: { host: "irc.example.net" },
 		auth: { username: "agent", passwordEnv: "IRC_PASS" },
 	});
+
 	const cfg = loadConfig({ globalPath, projectDir: dir });
 	assert.equal(cfg.auth?.username, "agent");
 	assert.equal(cfg.auth?.passwordEnv, "IRC_PASS");
@@ -117,17 +129,20 @@ test("global auth reaches the config (was silently dropped by the merge)", () =>
 
 test("project-local keys (channels, capabilities, history) still override", () => {
 	const dir = tmpDir();
+
 	const globalPath = writeConfig(dir, "global.json", {
 		server: { host: "irc.example.net" },
 		channels: { defaults: ["#pi-lobby"] },
 		capabilities: { request: ["extended-join"] },
 		history: { catchupLimit: 50 },
 	});
+
 	const projectPath = writeConfig(dir, "project/.pi/pi-irc.json", {
 		channels: { defaults: ["#pi-project-ops"] },
 		capabilities: { request: ["extended-join", "server-time"] },
 		history: { catchupLimit: 5 },
 	});
+
 	const cfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "project") });
 	assert.deepEqual(cfg.channels.defaults, ["#pi-project-ops"]);
 	assert.deepEqual(cfg.capabilities.request, ["extended-join", "server-time"]);
@@ -144,6 +159,7 @@ test("explicit project slug wins over directory name", () => {
 
 test("wrong values fail loudly with the offending key", () => {
 	const dir = tmpDir();
+
 	const cases = [
 		[{ server: { host: 5 } }, "server.host"],
 		[{ server: { host: "h", port: 0 } }, "server.port"],
@@ -153,6 +169,7 @@ test("wrong values fail loudly with the offending key", () => {
 		[{ server: { host: "h" }, channels: { defaults: [42] } }, "channels.defaults[0]"],
 		[{ server: { host: "h" }, delivery: { bufferMax: 0 } }, "delivery.bufferMax"],
 	];
+
 	for (const [body, key] of cases) {
 		const globalPath = writeConfig(dir, `bad-${key.replace(/\W/g, "_")}.json`, body);
 		expectConfigError(() => loadConfig({ globalPath, projectDir: dir }), key);
@@ -174,10 +191,12 @@ test("invalid JSON names the file", () => {
 
 test("projectTemplate must render to a channel name", () => {
 	const dir = tmpDir();
+
 	const globalPath = writeConfig(dir, "t.json", {
 		server: { host: "h" },
 		channels: { projectTemplate: "{slug}" },
 	});
+
 	expectConfigError(() => loadConfig({ globalPath, projectDir: dir }), "channels.projectTemplate");
 });
 
@@ -197,11 +216,13 @@ function writeRawConfig(dir, name, text) {
 	const file = path.join(dir, name);
 	fs.mkdirSync(path.dirname(file), { recursive: true });
 	fs.writeFileSync(file, text);
+
 	return file;
 }
 
 test("jsonc tolerated: trailing commas and // comments in configs", () => {
 	const dir = tmpDir();
+
 	const globalPath = writeRawConfig(
 		dir,
 		"global.json",
@@ -215,6 +236,7 @@ test("jsonc tolerated: trailing commas and // comments in configs", () => {
 			"nick": { "template": "pi-//not-a-comment" },
 		}`,
 	);
+
 	const cfg = loadConfig({ globalPath, projectDir: dir });
 	assert.equal(cfg.server.host, "localhost");
 	assert.equal(cfg.server.port, 6667);
@@ -224,6 +246,7 @@ test("jsonc tolerated: trailing commas and // comments in configs", () => {
 
 test("jsonc tolerated: block comments and trailing comma in arrays", () => {
 	const dir = tmpDir();
+
 	const globalPath = writeRawConfig(
 		dir,
 		"global.json",
@@ -234,6 +257,7 @@ test("jsonc tolerated: block comments and trailing comma in arrays", () => {
 			}, /* block comment */
 		}`,
 	);
+
 	const cfg = loadConfig({ globalPath, projectDir: dir });
 	assert.deepEqual(cfg.channels.defaults, ["#ops", "#lounge"]);
 });
@@ -257,12 +281,16 @@ test("delivery flood keys: defaults, clamping, project merge", () => {
 	const projectPath = writeConfig(path.join(dir, "p"), ".pi/pi-irc.json", {
 		delivery: { burst: 2, intervalMs: 500 },
 	});
+
 	const projCfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "p") });
 	assert.equal(projCfg.delivery.burst, 8, "project delivery section ignored");
 	assert.equal(projCfg.delivery.intervalMs, 1000);
 
 	expectConfigError(
-		() => loadConfig({ globalPath: writeConfig(dir, "bad.json", { server: { host: "irc.example.net" }, delivery: { burst: 0 } }) }),
+		() =>
+			loadConfig({
+				globalPath: writeConfig(dir, "bad.json", { server: { host: "irc.example.net" }, delivery: { burst: 0 } }),
+			}),
 		"delivery.burst",
 	);
 });

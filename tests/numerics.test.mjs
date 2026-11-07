@@ -5,9 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { loadViaPi, repoFile } from "./helpers.mjs";
 
-const { NUMERICS, numericName, isErrorNumeric, isJoinFailure } = await loadViaPi(
-	repoFile("lib", "numerics.ts"),
-);
+const { NUMERICS, numericName, isErrorNumeric, isJoinFailure } = await loadViaPi(repoFile("lib", "numerics.ts"));
 
 test("numeric table holds the RFC 2812 values the client branches on", () => {
 	assert.equal(NUMERICS.RPL_WELCOME, 1);

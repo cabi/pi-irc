@@ -18,6 +18,7 @@ export interface ChannelState {
 
 export function validChannelName(name: string): boolean {
 	if (!/^[#+&][^\s,\x00\x07:]{1,49}$/.test(name)) return false;
+
 	return true;
 }
 
@@ -35,10 +36,12 @@ export class Channels {
 	join(name: string, now = Date.now()): ChannelState {
 		const key = Channels.fold(name);
 		let state = this.channels.get(key);
+
 		if (!state) {
 			state = { name, joinedAt: now, topic: null, members: new Set() };
 			this.channels.set(key, state);
 		}
+
 		return state;
 	}
 
@@ -61,23 +64,28 @@ export class Channels {
 	/** True if the nick is still tracked in ANY channel we're in. */
 	memberAnywhere(nick: string): boolean {
 		const key = Channels.fold(nick);
+
 		for (const state of this.channels.values()) if (state.members.has(key)) return true;
+
 		return false;
-}
+	}
 
 	/** Someone quit the server: drop them from every channel. */
 	removeMemberEverywhere(nick: string): string[] {
 		const key = Channels.fold(nick);
 		const affected: string[] = [];
+
 		for (const state of this.channels.values()) {
 			if (state.members.delete(key)) affected.push(state.name);
 		}
+
 		return affected;
 	}
 
 	renameMember(oldNick: string, newNick: string): void {
 		const oldKey = Channels.fold(oldNick);
 		const newKey = Channels.fold(newNick);
+
 		for (const state of this.channels.values()) {
 			if (state.members.delete(oldKey)) state.members.add(newKey);
 		}
@@ -85,11 +93,13 @@ export class Channels {
 
 	setTopic(channel: string, topic: string): void {
 		const state = this.get(channel);
+
 		if (state) state.topic = topic;
 	}
 
 	names(channel: string, nicknames: string[]): void {
 		const state = this.join(channel);
+
 		for (const raw of nicknames) {
 			// Strip membership prefixes (@ + ~ & %) — presence is what we track.
 			state.members.add(Channels.fold(raw.replace(/^[~&@%+\s]+/, "")));

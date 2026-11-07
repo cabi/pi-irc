@@ -6,16 +6,22 @@ import { loadViaPi, repoFile } from "./helpers.mjs";
 const { DeliveryQueue, chunkText } = await loadViaPi(repoFile("lib", "delivery.ts"));
 
 function mkqueue(sends, opts = {}) {
-	return new DeliveryQueue(
-		(target, text) => sends.push({ target, text }),
-		{ burst: 3, intervalMs: 1000, maxChunk: 20, chunkLong: true, ...opts },
-	);
+	return new DeliveryQueue((target, text) => sends.push({ target, text }), {
+		burst: 3,
+		intervalMs: 1000,
+		maxChunk: 20,
+		chunkLong: true,
+		...opts,
+	});
 }
 
 test("chunkText splits at word boundaries and stamps nothing itself", () => {
 	assert.deepEqual(chunkText("short", 20), ["short"]);
 	const pieces = chunkText("aaaa bbbb cccc dddd eeee", 10);
-	assert.ok(pieces.every((p) => p.length <= 10), JSON.stringify(pieces));
+	assert.ok(
+		pieces.every((p) => p.length <= 10),
+		JSON.stringify(pieces),
+	);
 	assert.equal(pieces.join(" "), "aaaa bbbb cccc dddd eeee");
 	// Hard split when no space helps.
 	assert.deepEqual(chunkText("abcdefghijklmnop", 8), ["abcdefgh", "ijklmnop"]);
@@ -25,6 +31,7 @@ test("sender throwing WireError drops the chunk instead of blocking the queue", 
 	const { WireError } = await loadViaPi(repoFile("lib", "wire.ts"));
 	const sends = [];
 	const drops = [];
+
 	const q = new DeliveryQueue(
 		(target, text) => {
 			if (text === "POISON") throw new WireError("line too long");
@@ -32,6 +39,7 @@ test("sender throwing WireError drops the chunk instead of blocking the queue", 
 		},
 		{ burst: 10, intervalMs: 1000, maxChunk: 400, chunkLong: false },
 	);
+
 	q.onDrop = (t, text, err) => drops.push({ t, text, err: err.message });
 	q.enqueue("#c", "POISON");
 	q.enqueue("#c", "after-poison");
@@ -50,14 +58,20 @@ test("chunkText is byte-aware: CJK and emoji fit the byte budget", () => {
 	const cjk = "日本語".repeat(80);
 	const parts = chunkText(cjk, 60);
 	assert.ok(parts.length > 1, "should split");
-	assert.ok(parts.every((p) => Buffer.byteLength(p, "utf8") <= 60), JSON.stringify(parts));
+	assert.ok(
+		parts.every((p) => Buffer.byteLength(p, "utf8") <= 60),
+		JSON.stringify(parts),
+	);
 	assert.equal(parts.join(""), cjk, "lossless reassembly (no spaces to drop)");
 
 	// Emoji are surrogate pairs (4 bytes) — never split mid-pair.
 	const emoji = "🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀";
 	const ep = chunkText(emoji, 24); // 6 emoji per chunk
 	assert.ok(ep.every((p) => Buffer.byteLength(p) <= 24));
-	assert.ok(ep.every((p) => !/[\ud800-\udbff]$/.test(p)), "no dangling high surrogate");
+	assert.ok(
+		ep.every((p) => !/[\ud800-\udbff]$/.test(p)),
+		"no dangling high surrogate",
+	);
 	assert.equal(ep.join(""), emoji);
 
 	// Mixed content still prefers word boundaries when bytes allow.
@@ -69,6 +83,7 @@ test("chunkText is byte-aware: CJK and emoji fit the byte budget", () => {
 test("burst allows N immediate sends, then throttles", () => {
 	const sends = [];
 	const q = mkqueue(sends);
+
 	for (let i = 0; i < 5; i++) q.enqueue("#chan", `m${i}`);
 	assert.equal(q.pending(), 5);
 
@@ -91,11 +106,17 @@ test("long messages chunk and drain in order with part markers", () => {
 	q.enqueue("#chan", "one two three four five six"); // 27 chars → 2+ chunks @20
 	const out = q.drain(0);
 	assert.ok(out.length >= 2);
-	assert.deepEqual(out.map((c) => c.part?.i), [1, 2]);
+	assert.deepEqual(
+		out.map((c) => c.part?.i),
+		[1, 2],
+	);
 	assert.equal(out[0].part.n, out.length);
 	// Reassembly equals the original (modulo split-space normalization).
 	assert.equal(
-		out.map((c) => c.text).join(" ").replace(/\s+/g, " "),
+		out
+			.map((c) => c.text)
+			.join(" ")
+			.replace(/\s+/g, " "),
 		"one two three four five six",
 	);
 });
@@ -124,10 +145,12 @@ test("clear drops pending work; start/stop manage the timer", () => {
 test("pause holds the queue; resume flushes it; a dead sender keeps chunks queued", () => {
 	const sends = [];
 	let dead = false;
+
 	const q = new DeliveryQueue((t, x) => {
 		if (dead) throw new Error("send on closed socket");
 		sends.push(`${t}:${x}`);
 	});
+
 	q.pause();
 	q.enqueue("#chan", "while down 1");
 	q.enqueue("#chan", "while down 2");
@@ -148,6 +171,7 @@ test("pause holds the queue; resume flushes it; a dead sender keeps chunks queue
 
 test("enqueue: queue bound throws instead of growing without limit", () => {
 	const out = [];
+
 	const q = new DeliveryQueue((t, x) => out.push(`${t}:${x}`), {
 		burst: 1,
 		intervalMs: 1000,
@@ -155,6 +179,7 @@ test("enqueue: queue bound throws instead of growing without limit", () => {
 		chunkLong: true,
 		maxQueue: 3,
 	});
+
 	q.enqueue("a", "one"); // 1 chunk
 	q.enqueue("a", "two"); // 1
 	q.enqueue("a", "three"); // 1 — at the bound now
@@ -169,6 +194,7 @@ test("partial options fall back to defaults — no NaN pacer timer", async () =>
 	const warnings = [];
 	const onWarn = (w) => warnings.push(w.name);
 	process.on("warning", onWarn);
+
 	try {
 		const sent = [];
 		const q = new DeliveryQueue((t, x) => sent.push(x));
@@ -182,5 +208,6 @@ test("partial options fall back to defaults — no NaN pacer timer", async () =>
 	} finally {
 		process.off("warning", onWarn);
 	}
+
 	assert.deepEqual(warnings, [], `no timer warnings, got: ${warnings.join(", ")}`);
 });

@@ -7,6 +7,7 @@ import { loadViaPi, repoFile } from "./helpers.mjs";
 import { MockIrcServer } from "./mock-irc-server.mjs";
 
 const { IrcSocket } = await loadViaPi(repoFile("lib", "irc-socket.ts"));
+
 const { IrcClient } = await loadViaPi(repoFile("lib", "irc-client.ts"));
 
 async function withServer(t, fn, opts = {}) {
@@ -19,6 +20,7 @@ async function withServer(t, fn, opts = {}) {
 
 function connectClient(port) {
 	const socket = new IrcSocket();
+
 	const client = new IrcClient(
 		{
 			nick: "pi-demo-m01",
@@ -28,10 +30,12 @@ function connectClient(port) {
 		},
 		socket,
 	);
+
 	// Keep watchdog/timeouts from crashing the process when a test has no
 	// explicit error listener.
 	client.on("error", () => {});
 	const done = socket.connect({ host: "127.0.0.1", port, tls: false, timeoutMs: 3000 });
+
 	return { socket, client, done };
 }
 

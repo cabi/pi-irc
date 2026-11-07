@@ -6,12 +6,12 @@
  *
  *   IRC_PORT=6667 node scripts/ask-reply-smoke.mjs
  */
-import assert from "node:assert/strict";
 import { loadViaPi, repoFile } from "../tests/helpers.mjs";
 
 const { IrcSession } = await loadViaPi(repoFile("lib", "session.ts"));
 
 const HOST = "127.0.0.1";
+
 const PORT = Number(process.env.IRC_PORT ?? 6667);
 
 const baseConfig = {
@@ -32,6 +32,7 @@ const baseConfig = {
 };
 
 const stamp = Date.now().toString(36).slice(-4);
+
 const NICKS = { main: `pi-main-a${stamp}`, sub: `pi-sub-b${stamp}` };
 
 function cfg(role) {
@@ -42,18 +43,21 @@ async function boot(role, shortId) {
 	const wakes = [];
 	const s = await IrcSession.connect(cfg(role), { project: "askdemo", role, shortId });
 	s.on("wake", (w) => wakes.push(w));
+
 	return { s, wakes };
 }
 
 // Collect raw wire lines both directions via a sniffer session? Simpler:
 // assert on observable session state; wire fidelity is covered by mock tests.
 const results = [];
+
 const check = (name, ok, extra = "") => {
 	results.push([name, ok]);
 	console.log(`${ok ? "PASS" : "FAIL"}  ${name}${extra ? ` — ${extra}` : ""}`);
 };
 
 let exit = 0;
+
 try {
 	console.log(`# ask/reply smoke against ${HOST}:${PORT}`);
 	const main = await boot("main", `a${stamp}`);
@@ -66,7 +70,17 @@ try {
 	check("main resolves @session-id to the sub nick", atSub === NICKS.sub, `${atSub} (sub=${NICKS.sub})`);
 	check("main resolves the 'sub' role selector", main.s.resolveTarget("sub") === NICKS.sub);
 	check("sub resolves the 'main' role selector", sub.s.resolveTarget("main") === NICKS.main);
-	const noMain = (() => { try { main.s.resolveTarget("main"); return "resolved"; } catch (e) { return e.message; } })();
+
+	const noMain = (() => {
+		try {
+			main.s.resolveTarget("main");
+
+			return "resolved";
+		} catch (e) {
+			return e.message;
+		}
+	})();
+
 	check("main cannot address itself via role (self-excluded)", /no main agent/.test(noMain), noMain.slice(0, 60));
 
 	// 1. main asks sub a long question (forces multi-part envelope)
@@ -113,5 +127,7 @@ try {
 }
 
 const failed = results.filter(([, ok]) => !ok);
+
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
+
 process.exit(failed.length || exit ? 1 : 0);

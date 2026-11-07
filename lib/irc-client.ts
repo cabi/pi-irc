@@ -117,6 +117,7 @@ export class IrcClient extends EventEmitter {
 			},
 			error: (err: Error) => this.emit("error", new Error(`socket: ${err.message}`)),
 		};
+
 		transport.on("line", handlers.line);
 		transport.on("close", handlers.close);
 		transport.on("error", handlers.error);
@@ -135,6 +136,7 @@ export class IrcClient extends EventEmitter {
 			this.#transport.off("close", this.#tHandlers.close);
 			this.#transport.off("error", this.#tHandlers.error);
 		}
+
 		this.#stopWatchdog();
 		this.#bindTransport(transport);
 		this.state = "idle";
@@ -154,6 +156,7 @@ export class IrcClient extends EventEmitter {
 	/** Begin registration on an already-connected transport. */
 	startRegistration(): void {
 		this.state = "registering";
+
 		// IRCv3: CAP LS goes out before NICK/USER; CAP END follows the ACK,
 		// which releases the server to send 001.
 		for (const line of this.#caps.start()) this.#transport.send(line);
@@ -220,28 +223,36 @@ export class IrcClient extends EventEmitter {
 			const collected: IrcMessage[] = [];
 			const open = new Set<string>();
 			const lower = target.toLowerCase();
+
 			const mine = (t: string | undefined) =>
 				t === undefined || t.toLowerCase() === lower || t.toLowerCase() === this.nick.toLowerCase();
+
 			const cleanup = () => {
 				clearTimeout(timer);
 				this.off("batchStart", onBatchStart);
 				this.off("batchEnd", onBatchEnd);
 				this.off("message", onMessage);
 			};
+
 			const done = () => {
 				cleanup();
 				resolve(collected);
 			};
+
 			const timer = setTimeout(done, timeoutMs);
+
 			const onBatchStart = (e: { ref: string; type: string; target?: string }) => {
 				if (e.type === "chathistory" && mine(e.target)) open.add(e.ref);
 			};
+
 			const onBatchEnd = (e: { ref: string }) => {
 				if (open.has(e.ref)) done();
 			};
+
 			const onMessage = (m: IrcMessage) => {
 				if (m.command === "PRIVMSG" && m.tags?.batch && open.has(m.tags.batch)) collected.push(m);
 			};
+
 			this.on("batchStart", onBatchStart);
 			this.on("batchEnd", onBatchEnd);
 			this.on("message", onMessage);
@@ -259,23 +270,30 @@ export class IrcClient extends EventEmitter {
 	#onLine(rawLine: string): void {
 		this.lastServerLineAt = Date.now();
 		let msg: IrcMessage;
+
 		try {
 			msg = parseLine(rawLine);
 		} catch (err) {
 			this.emit("error", { message: `unparseable line: ${rawLine}: ${(err as Error).message}` });
+
 			return;
 		}
+
 		this.emit("message", msg);
 
 		if (msg.command === "PING") {
 			this.#transport.send(wire.pong(msg.params[0] ?? "1"));
+
 			return;
 		}
+
 		if (msg.command === "PONG") return;
+
 		if (msg.command === "BATCH") {
 			// IRCv3 batches: "+ref type params" opens, "-ref" closes. Lines
 			// inside carry tag batch=ref and flow through as normal events.
 			const refArg = msg.params[0] ?? "";
+
 			if (refArg.startsWith("+")) {
 				const ref = refArg.slice(1);
 				this.#batches.set(ref, msg.params[1] ?? "");
@@ -286,36 +304,50 @@ export class IrcClient extends EventEmitter {
 				this.#batches.delete(ref);
 				this.emit("batchEnd", { ref, type });
 			}
+
 			return;
 		}
+
 		if (msg.command === "CAP") {
 			const action = this.#caps.handleCap(msg.params);
+
 			// With SASL configured the finish line is held back here —
 			// 903/907 send CAP END once authentication has actually run.
-			const lines = action.done && this.spec.sasl ? (action.send ?? []).filter((l) => l !== "CAP END") : (action.send ?? []);
+			const lines =
+				action.done && this.spec.sasl ? (action.send ?? []).filter((l) => l !== "CAP END") : (action.send ?? []);
+
 			for (const line of lines) this.#transport.send(line);
+
 			if (action.done) this.#capsDone();
+
 			return;
 		}
+
 		if (msg.command === "AUTHENTICATE") {
 			// Server side of the exchange: "+" invites the payload, "*" aborts.
 			const param = msg.params[0];
+
 			if (param === "+" && this.#saslChunks) {
 				for (const chunk of this.#saslChunks) this.#transport.send(`AUTHENTICATE ${chunk}`);
 			} else if (param === "*") {
 				this.emit("error", { message: "server aborted SASL exchange" });
 				this.#transport.destroy();
 			}
+
 			return;
 		}
+
 		if (msg.command === "AWAY") {
 			// away-notify: params empty → back, [":reason"] → away.
 			this.emit("away", { nick: msg.sourceNick ?? "?", away: msg.params.length > 0 });
+
 			return;
 		}
+
 		if (msg.command === "ERROR") {
 			// "ERROR :Closing Link: ..." — the server is hanging up on us.
 			this.emit("error", { message: msg.params.join(" ") });
+
 			return;
 		}
 
@@ -327,21 +359,25 @@ export class IrcClient extends EventEmitter {
 				target,
 				text,
 				toSelf: this.isSelf(msg.sourceNick ?? ""),
-			...(msg.tags?.time ? { time: msg.tags.time } : {}),
+				...(msg.tags?.time ? { time: msg.tags.time } : {}),
 				...(msg.tags?.msgid ? { msgid: msg.tags.msgid } : {}),
 				...(msg.tags?.batch ? { batch: msg.tags.batch } : {}),
 			});
+
 			return;
 		}
+
 		if (msg.command === "NOTICE") {
-			const [target, ...rest] = msg.params;
+			const [, ...rest] = msg.params;
 			this.emit("notice", {
 				from: msg.sourceNick ?? msg.prefix ?? "?",
 				text: rest.join(" "),
 				toSelf: this.isSelf(msg.sourceNick ?? ""),
 			});
+
 			return;
 		}
+
 		if (msg.command === "JOIN") {
 			// RFC 2812: JOIN <channel>. extended-join: JOIN <channel> <account> <realname>.
 			const [channel, account, realname] = msg.params;
@@ -352,8 +388,10 @@ export class IrcClient extends EventEmitter {
 				...(account !== undefined ? { account } : {}),
 				...(realname !== undefined ? { realname } : {}),
 			});
+
 			return;
 		}
+
 		if (msg.command === "PART") {
 			const channel = msg.params[0];
 			this.emit("part", {
@@ -361,12 +399,16 @@ export class IrcClient extends EventEmitter {
 				channel,
 				self: this.isSelf(msg.sourceNick ?? ""),
 			});
+
 			return;
 		}
+
 		if (msg.command === "QUIT") {
 			this.emit("quit", { nick: msg.sourceNick ?? "?", reason: msg.params.join(" ") });
+
 			return;
 		}
+
 		if (msg.command === "KICK") {
 			// <channel> <user> [:comment]
 			const channel = msg.params[0];
@@ -378,17 +420,22 @@ export class IrcClient extends EventEmitter {
 				reason: msg.params.slice(2).join(" "),
 				self: this.isSelf(nick),
 			});
+
 			return;
 		}
+
 		if (msg.command === "NICK") {
 			const newNick = msg.params[0];
 			const self = this.isSelf(msg.sourceNick ?? "");
+
 			if (self) this.nick = newNick;
 			this.emit("nickChange", { oldNick: msg.sourceNick ?? "?", newNick, self });
+
 			return;
 		}
 
 		const code = /^\d{3}$/.test(msg.command) ? Number(msg.command) : undefined;
+
 		if (code === undefined) return; // MODE, CAP, whatever: session's business
 
 		switch (code) {
@@ -403,21 +450,26 @@ export class IrcClient extends EventEmitter {
 				// negotiation silently and let registration finish.
 				if (this.#caps.phase !== "done") {
 					this.#caps.abort();
-				this.#capsDone();
+					this.#capsDone();
 				}
+
 				break;
 			case NUMERICS.ERR_NICKNAMEINUSE:
 			case NUMERICS.ERR_ERRONEUSNICKNAME: {
 				const pool = this.spec.nickFallbacks ?? NICK_FALLBACKS;
+
 				if (this.fallbackIdx >= pool.length) {
 					this.emit("error", { code, message: `all nick variants taken: ${this.currentNickBase}` });
 					this.#transport.destroy();
+
 					return;
 				}
+
 				this.nick = `${this.currentNickBase}${pool[this.fallbackIdx++]}`;
 				this.#transport.send(wire.nick(this.nick));
 				break;
 			}
+
 			case NUMERICS.RPL_SASLSUCCESS:
 			case NUMERICS.ERR_SASLALREADY:
 				// 903 = success; 907 = already authenticated from a prior
@@ -455,6 +507,7 @@ export class IrcClient extends EventEmitter {
 	/** Caps wanted for this registration: config request plus sasl when auth is on. */
 	#wantedCaps(): string[] {
 		const wanted = this.spec.caps ?? [];
+
 		return this.spec.sasl ? [...new Set([...wanted, "sasl"])] : wanted;
 	}
 
@@ -466,15 +519,22 @@ export class IrcClient extends EventEmitter {
 	#capsDone(): void {
 		if (this.spec.sasl) {
 			const negotiated = this.#caps.enabled.some((c) => c.toLowerCase() === "sasl");
+
 			if (!negotiated) {
-				this.emit("error", { message: "auth configured but the server will not negotiate sasl (not offered or refused)" });
+				this.emit("error", {
+					message: "auth configured but the server will not negotiate sasl (not offered or refused)",
+				});
 				this.#transport.destroy();
+
 				return;
 			}
+
 			this.#saslChunks = authChunks(saslPlainPayload(this.spec.sasl.username, this.spec.sasl.password));
 			this.#transport.send("AUTHENTICATE PLAIN");
+
 			return;
 		}
+
 		this.emit("capsEnabled", { caps: this.#caps.enabled });
 	}
 

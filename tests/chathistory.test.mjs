@@ -9,8 +9,11 @@ import * as path from "node:path";
 import { loadViaPi, repoFile, sleep } from "./helpers.mjs";
 
 const { IrcSession } = await loadViaPi(repoFile("lib", "session.ts"));
+
 const { IrcClient } = await loadViaPi(repoFile("lib", "irc-client.ts"));
+
 const { executeIrcOp } = await loadViaPi(repoFile("lib", "tool.ts"));
+
 const { loadConfig } = await loadViaPi(repoFile("lib", "config.ts"));
 
 /**
@@ -47,24 +50,33 @@ class FakeHistoryServer extends EventEmitter {
 	#flush() {
 		const pending = this.#answers;
 		this.#answers = [];
+
 		for (const a of pending) queueMicrotask(a);
 	}
 
 	#autoAnswer(line) {
 		if (!this.#client) return;
 		const m = /^(\S+)(?:\s+(.*))?$/.exec(line);
+
 		if (!m) return;
 		const [, cmd, rest = ""] = m;
 		const me = this.#client.nick;
+
 		switch (cmd) {
 			case "CAP": {
 				const sub = rest.split(" ")[0];
+
 				if (sub === "LS") this.say(":srv CAP * LS :batch draft/chathistory server-time");
+
 				if (sub === "REQ") this.say(":srv CAP * ACK :batch draft/chathistory");
 				break;
 			}
+
 			case "JOIN": {
-				for (const chan of rest.split(",").map((c) => c.trim()).filter(Boolean)) {
+				for (const chan of rest
+					.split(",")
+					.map((c) => c.trim())
+					.filter(Boolean)) {
 					this.say(`:${me}!pi@h JOIN ${chan}`);
 					this.say(`:srv 331 ${me} ${chan} :No topic is set`);
 					this.say(`:srv 353 ${me} = ${chan} :${me}`);
@@ -72,8 +84,10 @@ class FakeHistoryServer extends EventEmitter {
 					this.say(`:srv 352 ${me} ${chan} pi h srv ${me} H :0 pi-agent project=proj role=main session=s1`);
 					this.say(`:srv 315 ${me} ${chan} :End of WHO list`);
 				}
+
 				break;
 			}
+
 			case "TOPIC":
 				this.say(`:srv 331 ${me} ${rest} :No topic is set`);
 				break;
@@ -85,17 +99,18 @@ class FakeHistoryServer extends EventEmitter {
 				const [, target] = rest.split(" ");
 				const iso = new Date().toISOString();
 				this.say(`:srv BATCH +7 chathistory ${target}`);
+
 				for (const r of this.replay) {
 					const msgid = this.autoUniqueMsgids ? `${r.msgid}-${++this.#msgSeq}` : r.msgid;
 					// DM history replays with target = OUR nick (RFC-realistic).
 					const to = /^[#&+]/.test(target) ? target : me;
-					this.say(
-						`@msgid=${msgid};time=${iso};batch=7 :${r.from}!u@h PRIVMSG ${to} :${r.text}`,
-					);
+					this.say(`@msgid=${msgid};time=${iso};batch=7 :${r.from}!u@h PRIVMSG ${to} :${r.text}`);
 				}
+
 				this.say(":srv BATCH -7");
 				break;
 			}
+
 			default:
 				break;
 		}
@@ -131,12 +146,14 @@ async function boot(over = {}, srv = new FakeHistoryServer()) {
 		{ nick: "pi-main-s1", username: "pi", realname: "pi-agent", caps: ["batch", "draft/chathistory"] },
 		srv,
 	);
+
 	srv.bind(client);
 	client.startRegistration();
 	srv.say(":srv 001 pi-main-s1 :Welcome");
 	const pending = IrcSession.connect(makeConfig(over), ident, { client });
 	srv.say(":srv 376 pi-main-s1 :End of MOTD");
 	const session = await pending;
+
 	return { srv, client, session };
 }
 
@@ -189,7 +206,10 @@ test("session: replayed history never wakes; live DMs still do", async () => {
 	// DM history via explicit fetch (as a restarted agent would):
 	const fetched = await session.fetchHistory("pi-sub-s2", 5);
 	assert.equal(wakes.length, 0, "replayed ask must not wake");
-	assert.ok(fetched.some((m) => m.kind === "ask"), "replayed ask is buffered and trackable");
+	assert.ok(
+		fetched.some((m) => m.kind === "ask"),
+		"replayed ask is buffered and trackable",
+	);
 	srv.say(":pi-sub-s2!u@h JOIN #pi-proj pi-sub-s2-acct :pi-agent project=proj role=sub");
 	srv.say(":pi-sub-s2!u@h PRIVMSG pi-main-s1 :live ping");
 	await sleep(20);
@@ -219,10 +239,7 @@ test("tool: history op formats the page; missing target fails loudly", async () 
 	const r = await executeIrcOp(async () => session, "history", { target: "#pi-proj" });
 	assert.match(r.content[0].text, /from the archive/);
 	assert.match(r.content[0].text, /<alice>/);
-	await assert.rejects(
-		() => executeIrcOp(async () => session, "history", {}),
-		/history requires target/,
-	);
+	await assert.rejects(() => executeIrcOp(async () => session, "history", {}), /history requires target/);
 });
 
 test("config: chathistory caps are default-on; catchupLimit validates", () => {

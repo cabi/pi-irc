@@ -14,8 +14,6 @@
  * - malformed envelopes are plain text — never an error on the wire
  */
 
-
-
 export interface AskEnvelope {
 	kind: "ask" | "reply";
 	id: string;
@@ -26,23 +24,28 @@ export interface AskEnvelope {
 	body: string;
 }
 
-const ENVELOPE_RE =
-	/^\[pi-(ask|reply) ([0-9a-f]{4,16})(?: timeout=(\d{1,5}))?(?: part=(\d{1,3})\/(\d{1,3}))?\] ?/;
+const ENVELOPE_RE = /^\[pi-(ask|reply) ([0-9a-f]{4,16})(?: timeout=(\d{1,5}))?(?: part=(\d{1,3})\/(\d{1,3}))?\] ?/;
 
 /** Parse a DM body into an envelope, or null for plain text / malformed. */
 export function parseEnvelope(text: string): AskEnvelope | null {
 	const m = ENVELOPE_RE.exec(text);
+
 	if (!m) return null;
 	const body = text.slice(m[0].length);
+
 	if (!body.trim()) return null; // empty body: not a real envelope, just text
 	const env: AskEnvelope = { kind: m[1] as "ask" | "reply", id: m[2], body };
+
 	if (m[3] !== undefined) env.timeoutSec = Number(m[3]);
+
 	if (m[4] !== undefined && m[5] !== undefined) {
 		const i = Number(m[4]);
 		const n = Number(m[5]);
+
 		if (i < 1 || n < 1 || i > n) return null; // nonsensical markers → plain text
 		env.part = { i, n };
 	}
+
 	return env;
 }
 
@@ -54,6 +57,7 @@ export function formatAsk(id: string, timeoutSec: number, body: string): string 
 /** Format a single [pi-reply] envelope, optionally as part i of n. */
 export function formatReply(id: string, body: string, part?: { i: number; n: number }): string {
 	const marker = part ? ` part=${part.i}/${part.n}` : "";
+
 	return `[pi-reply ${id}${marker}] ${body}`;
 }
 
@@ -67,14 +71,18 @@ function splitLossless(text: string, maxLen: number): string[] {
 	if (text.length <= maxLen) return [text];
 	const chunks: string[] = [];
 	let rest = text;
+
 	while (rest.length > maxLen) {
 		let cut = rest.lastIndexOf(" ", maxLen);
+
 		if (cut < Math.ceil(maxLen / 2)) cut = maxLen; // no good space: hard split
 		const keep = cut === maxLen ? cut : cut + 1; // space split keeps the space
 		chunks.push(rest.slice(0, keep));
 		rest = rest.slice(keep);
 	}
+
 	if (rest.length > 0) chunks.push(rest);
+
 	return chunks;
 }
 
@@ -98,13 +106,14 @@ export function envelopeParts(
 	// Budget for the longest prefix any part can carry (i and n have at most
 	// maxDigits digits each; ask adds " timeout=99999").
 	const digits = Math.max(2, String(Math.ceil(body.length / Math.max(8, maxChunk - 64))).length);
-	const budget =
-		prefixBudget(id, kind, digits) + (kind === "ask" ? " timeout=99999".length : 0) + 8;
+	const budget = prefixBudget(id, kind, digits) + (kind === "ask" ? " timeout=99999".length : 0) + 8;
 	const room = Math.max(24, maxChunk - budget);
 	const raw = splitLossless(body, room);
+
 	if (raw.length === 1) {
 		return [kind === "ask" ? formatAsk(id, timeoutSec ?? 600, body) : formatReply(id, body)];
 	}
+
 	return raw.map((chunk, idx) =>
 		kind === "ask"
 			? formatAsk(id, timeoutSec ?? 600, chunk) // asks stay single-chunk by contract; chunk defensively
@@ -141,6 +150,7 @@ export class ReplyAssembler {
 		const key = ReplyAssembler.key(sender, id);
 		this.#sweep();
 		let have = this.#parts.get(key);
+
 		if (!have) {
 			// Bound the assembler: evict the stalest incomplete id first.
 			while (this.#parts.size >= this.#maxPending) this.#evictOldest();
@@ -148,11 +158,15 @@ export class ReplyAssembler {
 			this.#parts.set(key, have);
 			this.#totals.set(key, part.n);
 		}
+
 		this.#seenAt.set(key, this.#now());
+
 		if (!have.has(part.i)) have.set(part.i, body); // first write wins on duplicates
+
 		if (this.#totals.get(key) !== part.n || have.size < part.n) return null;
 		const joined = Array.from({ length: part.n }, (_, k) => have!.get(k + 1) ?? "").join("");
 		this.#forget(key);
+
 		return joined;
 	}
 
@@ -165,18 +179,21 @@ export class ReplyAssembler {
 	#evictOldest(): void {
 		let oldest: string | null = null;
 		let oldestAt = Infinity;
+
 		for (const [key, at] of this.#seenAt) {
 			if (at < oldestAt) {
 				oldestAt = at;
 				oldest = key;
 			}
 		}
+
 		if (oldest !== null) this.#forget(oldest);
 	}
 
 	/** Drop incomplete assemblies older than the TTL (fragment floods never accumulate). */
 	#sweep(): void {
 		const cutoff = this.#now() - this.#ttlMs;
+
 		for (const [key, at] of this.#seenAt) {
 			if (at < cutoff) this.#forget(key);
 		}
@@ -215,6 +232,7 @@ export type AskResolution =
 	| { status: "replied"; id: string; peer: string; reply: string; elapsedMs: number }
 	| { status: "timeout"; id: string; peer: string; question: string; timeoutMs: number }
 	| { status: "disposed"; id: string; peer: string; question: string };
+
 export interface AskRegistryOptions {
 	now?: () => number;
 	setTimer?: (ms: number, fn: () => void) => unknown;
@@ -225,6 +243,7 @@ export interface AskRegistryOptions {
 const DEFAULT_ID_GEN = (): string => {
 	const bytes = new Uint8Array(4);
 	crypto.getRandomValues(bytes);
+
 	return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 };
 
@@ -251,11 +270,16 @@ export class AskRegistry {
 	}
 
 	/** Register an ask we sent; returns its id and its resolution promise. */
-	trackOutbound(peer: string, question: string, timeoutMs: number): {
+	trackOutbound(
+		peer: string,
+		question: string,
+		timeoutMs: number,
+	): {
 		id: string;
 		done: Promise<AskResolution>;
 	} {
 		const id = this.#idGen();
+
 		const entry: OutboundAsk = {
 			id,
 			peer,
@@ -264,20 +288,26 @@ export class AskRegistry {
 			timeoutMs,
 			state: "waiting",
 		};
+
 		this.#outbound.set(id, entry);
 		this.#purge();
+
 		const done = new Promise<AskResolution>((resolve) => {
 			this.#waiters.set(id, resolve);
+
 			const handle = this.#setTimer(timeoutMs, () => {
 				const ask = this.#outbound.get(id);
+
 				if (!ask || ask.state !== "waiting") return;
 				ask.state = "timeout";
 				this.#waiters.delete(id);
 				this.#timers.delete(id);
 				resolve({ status: "timeout", id, peer, question, timeoutMs });
 			});
+
 			this.#timers.set(id, handle);
 		});
+
 		return { id, done };
 	}
 
@@ -287,7 +317,9 @@ export class AskRegistry {
 	 * anyone else is foreign text, never the answer. */
 	resolveReply(id: string, reply: string, from?: string): boolean {
 		const ask = this.#outbound.get(id);
+
 		if (!ask || ask.state !== "waiting") return false;
+
 		if (from !== undefined && from.toLowerCase() !== ask.peer.toLowerCase()) return false;
 		ask.state = "replied";
 		ask.reply = reply;
@@ -301,6 +333,7 @@ export class AskRegistry {
 			reply,
 			elapsedMs: ask.repliedAt - ask.sentAt,
 		});
+
 		return true;
 	}
 
@@ -309,15 +342,18 @@ export class AskRegistry {
 		const entry: InboundAsk = { id, peer, question, receivedAt: this.#now() };
 		this.#inbound.set(id, entry);
 		this.#purge();
+
 		return entry;
 	}
 
 	/** Mark an inbound ask answered by us. False if unknown/already resolved. */
 	resolveInbound(id: string, repliedText: string): boolean {
 		const ask = this.#inbound.get(id);
+
 		if (!ask || ask.resolvedAt !== undefined) return false;
 		ask.resolvedAt = this.#now();
 		ask.repliedText = repliedText;
+
 		return true;
 	}
 
@@ -335,6 +371,7 @@ export class AskRegistry {
 	list(limit = 10): { outbound: OutboundAsk[]; inbound: InboundAsk[] } {
 		const outbound = [...this.#outbound.values()].sort((a, b) => b.sentAt - a.sentAt).slice(0, limit);
 		const inbound = [...this.#inbound.values()].sort((a, b) => b.receivedAt - a.receivedAt).slice(0, limit);
+
 		return { outbound, inbound };
 	}
 
@@ -343,19 +380,25 @@ export class AskRegistry {
 	 * order, so eviction drops the oldest first. */
 	#purge(): void {
 		const cutoff = this.#now() - 24 * 3600_000;
+
 		for (const [id, a] of this.#outbound) {
 			if (a.state !== "waiting" && a.sentAt < cutoff) this.#outbound.delete(id);
 		}
+
 		for (const [id, a] of this.#inbound) {
 			if (a.resolvedAt !== undefined && a.receivedAt < cutoff) this.#inbound.delete(id);
 		}
+
 		while (this.#outbound.size > 256) {
 			const oldest = this.#outbound.keys().next().value as string;
+
 			if (this.#outbound.get(oldest)?.state === "waiting") break; // never evict live asks
 			this.#outbound.delete(oldest);
 		}
+
 		while (this.#inbound.size > 256) {
 			const oldest = this.#inbound.keys().next().value as string;
+
 			if (this.#inbound.get(oldest)?.resolvedAt === undefined) break;
 			this.#inbound.delete(oldest);
 		}
@@ -366,6 +409,7 @@ export class AskRegistry {
 	dispose(): void {
 		for (const handle of this.#timers.values()) this.#clearTimer(handle);
 		this.#timers.clear();
+
 		for (const [id, waiter] of this.#waiters) {
 			const ask = this.#outbound.get(id);
 			waiter({
@@ -375,6 +419,7 @@ export class AskRegistry {
 				question: ask?.question ?? "",
 			});
 		}
+
 		this.#waiters.clear();
 	}
 }

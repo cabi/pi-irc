@@ -30,6 +30,7 @@ export function parseCapList(raw: string): string[] {
 /** Caps we will actually request: wanted ∩ offered. */
 export function pickCaps(offered: string[], wanted: string[]): string[] {
 	const fold = new Set(offered.map((c) => c.toLowerCase()));
+
 	return wanted.filter((c) => fold.has(c.toLowerCase()));
 }
 
@@ -49,6 +50,7 @@ export class CapNegotiator {
 	start(): string[] {
 		if (this.#wanted.length === 0 || this.#phase !== "idle") return [];
 		this.#phase = "ls";
+
 		return [`CAP LS 302`];
 	}
 
@@ -62,42 +64,57 @@ export class CapNegotiator {
 
 		if (sub === "LS") {
 			if (this.#phase === "done" || this.#phase === "req") return {};
+
 			if (this.#phase === "idle") return {}; // unsolicited: we never sent CAP LS
 			this.#phase = "ls";
 			this.#continuation = params[2] === "*"; // "CAP * LS * :..." → more coming
 			this.#offered.push(...parseCapList(rest));
+
 			if (this.#continuation) return {};
 			const req = pickCaps(this.#offered, this.#wanted);
+
 			if (req.length === 0) {
 				this.#phase = "done";
+
 				return { send: ["CAP END"], done: true, enabled: [] };
 			}
+
 			this.#phase = "req";
+
 			return { send: [`CAP REQ :${req.join(" ")}`] };
 		}
 
 		if (sub === "ACK") {
 			if (this.#phase !== "req") return {};
+
 			const acked = parseCapList(rest).filter((c) =>
 				pickCaps(this.#offered, this.#wanted).some((w) => w.toLowerCase() === c.toLowerCase()),
 			);
+
 			this.#enabled.push(...acked);
+
 			if (this.#pending.length > 0) {
 				this.#retire(acked);
+
 				return this.#pending.length === 0 ? this.#finish() : { enabled: this.#enabled };
 			}
+
 			this.#phase = "done";
+
 			return { send: ["CAP END"], done: true, enabled: this.#enabled };
 		}
 
 		if (sub === "NAK") {
 			if (this.#phase !== "req") return {};
 			const caps = parseCapList(rest);
+
 			// Per-cap fallback verdict: just retire that one cap.
 			if (this.#pending.length > 0) {
 				this.#retire(caps);
+
 				return this.#pending.length === 0 ? this.#finish() : {};
 			}
+
 			// All-or-nothing batch bounce. A single-cap REQ that NAKs
 			// has nothing left to try — end empty. A multi-cap REQ gets
 			// split into one-cap REQs so one unsupported cap (seen in
@@ -105,16 +122,19 @@ export class CapNegotiator {
 			// costs us server-time.
 			if (caps.length <= 1) return this.#finish();
 			this.#pending = caps;
+
 			return { send: caps.map((c) => `CAP REQ :${c}`) };
 		}
 
 		if (sub === "NEW" || sub === "DEL") return {}; // mid-session changes: not our problem
+
 		return {};
 	}
 
 	/** Abort on 410 / pre-registration failure: stop all CAP traffic. */
 	abort(): CapAction {
 		this.#phase = "done";
+
 		return { done: true, enabled: [] };
 	}
 
@@ -135,6 +155,7 @@ export class CapNegotiator {
 	/** Negotiation is over — emit CAP END and whatever we kept. */
 	#finish(): CapAction {
 		this.#phase = "done";
+
 		return { send: ["CAP END"], done: true, enabled: [...this.#enabled] };
 	}
 

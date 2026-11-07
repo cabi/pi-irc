@@ -11,6 +11,7 @@
  */
 
 export type AgentRole = "main" | "sub";
+
 export type PeerKind = "agent" | "human";
 
 export interface Peer {
@@ -51,16 +52,23 @@ export function formatRealname(project: string, role: AgentRole): string {
 export function parseRealname(realname: string): RealnameInfo {
 	if (!/^pi-agent( |$)/.test(realname)) return { kind: "human" };
 	const info: RealnameInfo = { kind: "agent" };
+
 	for (const part of realname.slice(REALNAME_PREFIX.length).trim().split(/\s+/)) {
 		const eq = part.indexOf("=");
+
 		if (eq <= 0) continue;
 		const key = part.slice(0, eq);
 		const value = part.slice(eq + 1);
+
 		if (key === "role" && (value === "main" || value === "sub")) info.role = value;
+
 		if (key === "project" && value.length > 0) info.project = value;
+
 		if (key === "session" && value.length > 0) info.session = value;
+
 		if (key === "parent" && value.length > 0) info.parent = value;
 	}
+
 	return info;
 }
 
@@ -77,6 +85,7 @@ export class Roster {
 	touch(nick: string, patch: Partial<Peer> = {}): Peer {
 		const key = Roster.fold(nick);
 		const existing = this.peers.get(key);
+
 		const peer: Peer = {
 			nick,
 			kind: patch.kind ?? existing?.kind ?? "human",
@@ -89,13 +98,16 @@ export class Roster {
 			away: patch.away ?? existing?.away,
 			account: patch.account ?? existing?.account,
 		};
+
 		this.peers.set(key, peer);
+
 		return peer;
 	}
 
 	/** Apply a parsed realname (from WHO/WHOX) to a nick. */
 	applyRealname(nick: string, realname: string): Peer {
 		const info = parseRealname(realname);
+
 		return this.touch(nick, {
 			kind: info.kind,
 			role: info.role,
@@ -108,6 +120,7 @@ export class Roster {
 	/** A nick changed identity; move the entry under the new nick. */
 	rename(oldNick: string, newNick: string): void {
 		const old = this.peers.get(Roster.fold(oldNick));
+
 		if (!old) return;
 		this.peers.delete(Roster.fold(oldNick));
 		this.touch(newNick, old);
@@ -123,14 +136,13 @@ export class Roster {
 
 	setSelf(nick: string): void {
 		this.selfNick = Roster.fold(nick);
+
 		for (const peer of this.peers.values()) peer.self = Roster.fold(peer.nick) === this.selfNick;
 	}
 
 	/** Agents of one project, excluding ourselves — the coordination set. */
 	projectAgents(project: string): Peer[] {
-		return [...this.peers.values()].filter(
-			(p) => p.kind === "agent" && p.project === project && !p.self,
-		);
+		return [...this.peers.values()].filter((p) => p.kind === "agent" && p.project === project && !p.self);
 	}
 
 	/** The first main agent of a project, excluding ourselves, if any. */
@@ -141,12 +153,14 @@ export class Roster {
 	/** Drop peers not seen within ttlMs (offline/dead entries). */
 	expire(ttlMs: number, now = Date.now()): number {
 		let dropped = 0;
+
 		for (const [key, peer] of this.peers) {
 			if (!peer.self && now - peer.lastSeen > ttlMs) {
 				this.peers.delete(key);
 				dropped += 1;
 			}
 		}
+
 		return dropped;
 	}
 

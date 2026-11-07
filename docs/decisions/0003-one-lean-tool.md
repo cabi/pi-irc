@@ -1,6 +1,7 @@
 ---
 status: accepted
 ---
+
 # One lean tool; ops are parameters
 
 The agent-facing surface could be a family of tools (`irc_connect`,

@@ -8,6 +8,7 @@ import { EventEmitter } from "node:events";
 import { loadViaPi, repoFile } from "./helpers.mjs";
 
 const { saslPlainPayload, authChunks, SASL_MAX_CHUNK } = await loadViaPi(repoFile("lib", "sasl.ts"));
+
 const { IrcClient } = await loadViaPi(repoFile("lib", "irc-client.ts"));
 
 // ---------------------------------------------------------------- unit
@@ -17,10 +18,7 @@ test("saslPlainPayload: empty authzid, NUL-separated, base64", () => {
 	assert.equal(saslPlainPayload("josh", "PassW0rd"), expected);
 	// Multibyte passwords survive the round trip.
 	const pw = "pä§w0rd✓";
-	assert.equal(
-		Buffer.from(saslPlainPayload("u", pw), "base64").toString("utf8"),
-		`\u0000u\u0000${pw}`,
-	);
+	assert.equal(Buffer.from(saslPlainPayload("u", pw), "base64").toString("utf8"), `\u0000u\u0000${pw}`);
 });
 
 test("authChunks: ≤400 chars per line, exact multiples end with a bare +", () => {
@@ -33,7 +31,10 @@ test("authChunks: ≤400 chars per line, exact multiples end with a bare +", () 
 	const b801 = "y".repeat(SASL_MAX_CHUNK * 2 + 1);
 	const chunks = authChunks(b801);
 	assert.equal(chunks.length, 3);
-	assert.deepEqual(chunks.map((c) => c.length), [SASL_MAX_CHUNK, SASL_MAX_CHUNK, 1]);
+	assert.deepEqual(
+		chunks.map((c) => c.length),
+		[SASL_MAX_CHUNK, SASL_MAX_CHUNK, 1],
+	);
 	assert.equal(chunks.join(""), b801); // lossless
 });
 
@@ -65,6 +66,7 @@ class FakeTransport extends EventEmitter {
 
 function makeClient(sasl = { username: "agent", password: "secret" }) {
 	const t = new FakeTransport();
+
 	const c = new IrcClient(
 		{
 			nick: "pi-demo-s1",
@@ -76,6 +78,7 @@ function makeClient(sasl = { username: "agent", password: "secret" }) {
 		},
 		t,
 	);
+
 	return { c, t };
 }
 
@@ -113,7 +116,10 @@ test("long payloads are chunked to ≤400-char AUTHENTICATE lines", () => {
 	const authLines = t.sentLines("AUTHENTICATE").filter((l) => l !== "AUTHENTICATE PLAIN" && l !== "AUTHENTICATE +");
 	assert.equal(authLines.length, 2);
 	assert.ok(authLines.every((l) => l.length <= "AUTHENTICATE ".length + 400));
-	assert.equal(authLines.map((l) => l.slice("AUTHENTICATE ".length)).join(""), saslPlainPayload("agent", "p".repeat(500))); // lossless
+	assert.equal(
+		authLines.map((l) => l.slice("AUTHENTICATE ".length)).join(""),
+		saslPlainPayload("agent", "p".repeat(500)),
+	); // lossless
 });
 
 test("904 SASL failure surfaces an error and destroys the transport", () => {

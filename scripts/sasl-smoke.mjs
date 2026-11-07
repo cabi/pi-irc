@@ -16,18 +16,21 @@
  *   3. channel join + cross-client delivery still work authenticated
  *   4. a wrong password fails closed (connect rejects, never registers)
  */
-import assert from "node:assert/strict";
-import net from "node:net";
 import * as tls from "node:tls";
 import { loadViaPi, repoFile } from "../tests/helpers.mjs";
 
 const { IrcSession } = await loadViaPi(repoFile("lib", "session.ts"));
 
 const HOST = "127.0.0.1";
+
 const PORT = Number(process.env.IRC_PORT ?? 16667);
+
 const TLS_PORT = Number(process.env.IRC_TLS_PORT ?? 16697);
+
 const stamp = Date.now().toString(36).slice(-4);
+
 const ACCOUNT = `agentp7-${stamp}`;
+
 const PASSWORD = `pw-${stamp}-secret`;
 
 const baseConfig = {
@@ -58,20 +61,26 @@ function rawClient(nick) {
 	sock.on("data", (d) => {
 		buf += d;
 		let i;
+
 		while ((i = buf.indexOf("\r\n")) >= 0) {
 			const line = buf.slice(0, i);
 			buf = buf.slice(i + 2);
+
 			if (!line) continue;
 			lines.push(line);
+
 			for (const w of [...waiters]) w(line);
 		}
 	});
 	const send = (l) => sock.write(`${l}\r\n`);
+
 	const next = (pred, ms = 8000, tag = "?") =>
 		new Promise((res, rej) => {
 			const hit = lines.find(pred);
+
 			if (hit) return res(hit);
 			const t = setTimeout(() => rej(new Error(`timeout [${tag}]; last lines:\n${lines.slice(-10).join("\n")}`)), ms);
+
 			const waiter = (l) => {
 				if (pred(l)) {
 					clearTimeout(t);
@@ -79,8 +88,10 @@ function rawClient(nick) {
 					res(l);
 				}
 			};
+
 			waiters.push(waiter);
 		});
+
 	return {
 		lines,
 		send,
@@ -98,13 +109,16 @@ function rawClient(nick) {
 }
 
 const results = [];
+
 const check = (name, ok, extra = "") => {
 	results.push([name, ok]);
 	console.log(`${ok ? "PASS" : "FAIL"}  ${name}${extra ? ` — ${extra}` : ""}`);
 };
 
 let exit = 0;
+
 let probe;
+
 try {
 	console.log(`# SASL+TLS smoke: ${ACCOUNT} against ${HOST}:${TLS_PORT} (TLS), probe :${PORT}`);
 
@@ -112,12 +126,18 @@ try {
 	probe = rawClient(ACCOUNT);
 	await probe.register();
 	probe.send(`NS REGISTER ${PASSWORD}`);
+
 	const reg = await probe.next(
 		(l) => /NickServ.*NOTICE.*([Rr]egistered|already been registered|Account created)/.test(l),
 		10000,
 		"nickserv-register",
 	);
-	check("account registered via NickServ", /egistered|ccount created/.test(reg), reg.replace(/^:\S+\s+/, "").slice(0, 90));
+
+	check(
+		"account registered via NickServ",
+		/egistered|ccount created/.test(reg),
+		reg.replace(/^:\S+\s+/, "").slice(0, 90),
+	);
 	// The probe's plain connection auto-logged-in on registration; ergo
 	// refuses mixing secure and insecure sessions on one account, so the
 	// probe detaches before the agent's TLS+SASL session attaches.
@@ -127,7 +147,11 @@ try {
 	// Agent session: TLS transport + SASL PLAIN.
 	const session = await IrcSession.connect(baseConfig, { project: "sasl", role: "main", shortId: `s${stamp}` });
 	const st = session.status();
-	check("registered over TLS with SASL", st.connection === "registered", JSON.stringify({ nick: st.nick, connection: st.connection }));
+	check(
+		"registered over TLS with SASL",
+		st.connection === "registered",
+		JSON.stringify({ nick: st.nick, connection: st.connection }),
+	);
 	check("project channel joined", st.channels.includes("#pi-sasl"), JSON.stringify(st.channels ?? []));
 
 	// WHOIS from an unauthenticated observer proves the account binding.
@@ -150,6 +174,7 @@ try {
 		{ ...baseConfig, nick: { template: `${ACCOUNT}-s`, maxLen: 30 } },
 		{ project: "sasl", role: "sub", shortId: `t${stamp}` },
 	);
+
 	check("second session authenticates with same account", second.status().nick.length > 0, second.status().nick);
 	second.send(undefined, "sub here too");
 	const subDelivered = await waitFor((l) => l.includes("PRIVMSG #pi-sasl :sub here too")).catch(() => null);
@@ -157,6 +182,7 @@ try {
 
 	// Fail closed: wrong password must reject, never register anonymously.
 	let rejected = false;
+
 	try {
 		await IrcSession.connect(
 			{ ...baseConfig, auth: { username: ACCOUNT, password: "wrong-password" } },
@@ -166,6 +192,7 @@ try {
 		rejected = true;
 		var rejectMsg = err.message;
 	}
+
 	check("wrong password fails closed (rejects)", rejected, rejectMsg ?? "CONNECTED — FAIL OPEN BUG");
 
 	await session.stop();
@@ -176,6 +203,7 @@ try {
 	console.error(err);
 } finally {
 	const fails = results.filter(([, ok]) => !ok);
+
 	if (fails.length) exit = 1;
 	console.log(`\n${results.length - fails.length}/${results.length} checks passed`);
 	process.exit(exit);

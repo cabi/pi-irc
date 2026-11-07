@@ -9,7 +9,9 @@ import { MockIrcServer } from "./mock-irc-server.mjs";
 import { repoFile, loadViaPi } from "./helpers.mjs";
 
 const { Backoff } = await loadViaPi(repoFile("lib", "reconnect.ts"));
+
 const { IrcSession } = await loadViaPi(repoFile("lib", "session.ts"));
+
 const { IrcSocket } = await loadViaPi(repoFile("lib", "irc-socket.ts"));
 
 const ident = { project: "proj", role: "main", shortId: "s1" };
@@ -73,6 +75,7 @@ test("session re-establishes after the server kills the link", async (t) => {
 	const session = await IrcSession.connect(makeConfig(port), ident, {
 		reconnect: fastReconnect(),
 	});
+
 	t.after(() => session.stop());
 	const events = [];
 	session.on("reconnecting", (e) => events.push(["reconnecting", e]));
@@ -94,7 +97,7 @@ test("session re-establishes after the server kills the link", async (t) => {
 	assert.equal(session.client.nick, "pi-main-s1");
 
 	// Rejoined the project channel on the new connection.
-	const rejoined = server.lastClient().lines.some((l) => /^JOIN #pi-proj/.test(l));
+	const rejoined = server.lastClient().lines.some((l) => l.startsWith("JOIN #pi-proj"));
 	assert.ok(rejoined, `expected JOIN on second connection, got ${server.lastClient().lines}`);
 	assert.equal(session.status().reconnect, undefined);
 });
@@ -107,6 +110,7 @@ test("messages queued while down flush after reconnect", async (t) => {
 	const session = await IrcSession.connect(makeConfig(port), ident, {
 		reconnect: fastReconnect(),
 	});
+
 	t.after(() => session.stop());
 
 	server.clients[0].socket.destroy();
@@ -119,15 +123,15 @@ test("messages queued while down flush after reconnect", async (t) => {
 		const seen = [];
 		server.on("privmsg", ({ client, text }) => {
 			seen.push({ client, text });
+
 			if (seen.length === 2) resolve(seen);
 		});
 	});
+
 	await once(session, "reconnected", 2000);
 	const seen = await got; // flush happens right after re-register
-	assert.deepEqual(
-		seen.map((s) => s.text).sort(),
-		["queued while down", "second while down"],
-	);
+	assert.deepEqual(seen.map((s) => s.text).sort(), ["queued while down", "second while down"]);
+
 	for (const { client, text } of seen) {
 		assert.ok(client.lines.some((l) => l === `PRIVMSG #pi-proj :${text}`));
 	}
@@ -142,6 +146,7 @@ test("nick fallbacks re-arm on reconnect (ghost holds the original nick)", async
 	const session = await IrcSession.connect(makeConfig(port), ident, {
 		reconnect: fastReconnect(),
 	});
+
 	t.after(() => session.stop());
 	assert.equal(session.client.nick, "pi-main-s1-1"); // boot already fell back
 
@@ -158,20 +163,25 @@ test("failed attempts back off and eventually succeed", async (t) => {
 	const port = await server.start();
 
 	let factoryFailures = 0;
+
 	const session = await IrcSession.connect(makeConfig(port), ident, {
 		reconnect: fastReconnect({
 			transportFactory: () => {
 				// First two reconnect attempts can't even reach the server.
 				factoryFailures += 1;
+
 				if (factoryFailures <= 2) {
 					const dead = new IrcSocket();
 					dead.connect = () => Promise.reject(new Error("connection refused"));
+
 					return dead;
 				}
+
 				return new IrcSocket();
 			},
 		}),
 	});
+
 	t.after(() => session.stop());
 
 	const errors = [];
@@ -195,6 +205,7 @@ test("stop() cancels a pending reconnect", async (t) => {
 	const session = await IrcSession.connect(makeConfig(port), ident, {
 		reconnect: fastReconnect({ backoff: { baseMs: 5000, factor: 2, maxMs: 5000, jitter: 0 } }),
 	});
+
 	server.clients[0].socket.destroy();
 	await once(session, "reconnecting", 1000);
 
@@ -208,6 +219,7 @@ test("stop() cancels a pending reconnect", async (t) => {
 test("injected clients without a reconnect factory never reconnect", async (t) => {
 	const { IrcClient } = await loadViaPi(repoFile("lib", "irc-client.ts"));
 	const { EventEmitter } = await import("node:events");
+
 	class FakeTransport extends EventEmitter {
 		connect() {
 			return Promise.resolve();
@@ -218,6 +230,7 @@ test("injected clients without a reconnect factory never reconnect", async (t) =
 		close() {}
 		destroy() {}
 	}
+
 	const fake = new FakeTransport();
 	const client = new IrcClient({ nick: "pi-main-s1", username: "pi", realname: "r" }, fake);
 	client.state = "registered";

@@ -6,6 +6,7 @@ import { EventEmitter } from "node:events";
 import { loadViaPi, repoFile, sleep } from "./helpers.mjs";
 
 const { IrcSession } = await loadViaPi(repoFile("lib", "session.ts"));
+
 const { IrcClient } = await loadViaPi(repoFile("lib", "irc-client.ts"));
 
 /** Minimal fake: JOIN burst seeds the roster via NAMES + WHO (352). */
@@ -28,13 +29,16 @@ class FakeRosterServer extends EventEmitter {
 	#autoAnswer(line) {
 		if (!this.#client) return;
 		const m = /^(\S+)(?:\s+(.*))?$/.exec(line);
+
 		if (!m) return;
 		const [, cmd, rest = ""] = m;
 		const me = this.#client.nick;
+
 		if (cmd === "JOIN") {
 			this.say(`:${me}!pi@h JOIN ${rest}`);
 			this.say(`:srv 353 ${me} = ${rest} :${me} pi-main-aaa111 pi-sub-bbb222 pi-sub-ccc333 carsten`);
 			this.say(`:srv 366 ${me} ${rest} :End of /NAMES list.`);
+
 			for (const w of [
 				"pi h srv pi-main-aaa111 H :0 pi-agent project=proj role=main session=aaa111",
 				"pi h srv pi-sub-bbb222 H :0 pi-agent project=proj role=sub session=bbb222",
@@ -43,9 +47,12 @@ class FakeRosterServer extends EventEmitter {
 			]) {
 				this.say(`:srv 352 ${me} ${rest} ${w}`);
 			}
+
 			this.say(`:srv 315 ${me} ${rest} :End of WHO list`);
 		}
+
 		if (cmd === "TOPIC") this.say(`:srv 331 ${me} ${rest.split(" ")[0]} :No topic is set`);
+
 		if (cmd === "WHO") this.say(`:srv 315 ${me} ${rest.split(" ")[0]} :End of WHO list`);
 	}
 
@@ -66,6 +73,7 @@ async function boot() {
 	srv.bind(client);
 	client.startRegistration();
 	srv.say(":srv 001 pi-main-me1 :Welcome");
+
 	const cfg = {
 		server: { host: "irc.example", port: 6667, tls: false },
 		nick: { template: "pi-{role}-{shortId}", maxLen: 30 },
@@ -75,10 +83,12 @@ async function boot() {
 		history: { catchupLimit: 0 },
 		projectSlug: "proj",
 	};
+
 	const pending = IrcSession.connect(cfg, { project: "proj", role: "main", shortId: "me1" }, { client });
 	srv.say(":srv 376 pi-main-me1 :End of MOTD");
 	const session = await pending;
 	await sleep(20); // let the WHO burst land
+
 	return { srv, session };
 }
 
@@ -90,7 +100,10 @@ test("resolveTarget: @session prefix and exact id", async () => {
 
 test("resolveTarget: unknown or ambiguous selectors fail with candidates", async () => {
 	const { session } = await boot();
-	assert.throws(() => session.resolveTarget("@zzz999"), /no agent session starts with "zzz999".*pi-main-aaa111 @aaa111/s);
+	assert.throws(
+		() => session.resolveTarget("@zzz999"),
+		/no agent session starts with "zzz999".*pi-main-aaa111 @aaa111/s,
+	);
 	assert.throws(() => session.resolveTarget("sub"), /2 sub agents — address by @session instead/s);
 	assert.equal(session.resolveTarget("main2"), "main2"); // unknown word = raw nick passthrough
 });
@@ -108,11 +121,11 @@ test("send routes through the resolver", async () => {
 	const { srv, session } = await boot();
 	session.send("@bbb222", "hello sub");
 	await sleep(20);
-	assert.ok(srv.lines.some((l) => /^PRIVMSG pi-sub-bbb222 :hello sub/.test(l)));
+	assert.ok(srv.lines.some((l) => l.startsWith("PRIVMSG pi-sub-bbb222 :hello sub")));
 	// Role selector also works for send:
 	session.send("main", "hello main");
 	await sleep(20);
-	assert.ok(srv.lines.some((l) => /^PRIVMSG pi-main-aaa111 :hello main/.test(l)));
+	assert.ok(srv.lines.some((l) => l.startsWith("PRIVMSG pi-main-aaa111 :hello main")));
 });
 
 test("ask envelopes ride the resolved nick", async () => {

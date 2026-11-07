@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { loadViaPi, repoFile } from "./helpers.mjs";
 
 const id = await loadViaPi(repoFile("lib", "identity.ts"));
+
 const { parseRealname } = await loadViaPi(repoFile("lib", "roster.ts"));
 
 test("renderNick substitutes and sanitizes placeholders", () => {
@@ -50,6 +51,7 @@ test("buildRegisterIdentity composes the RegisterSpec pieces", () => {
 		{ template: "pi-{project}-{shortId}", maxLen: 30 },
 		{ project: "demo", role: "main", shortId: "ab12cd34" },
 	);
+
 	assert.equal(reg.nick, "pi-demo-ab12cd34");
 	assert.equal(reg.username, "pi");
 	assert.match(reg.realname, /^pi-agent project=demo role=main session=ab12cd34$/);

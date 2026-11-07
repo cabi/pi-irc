@@ -9,18 +9,24 @@ import { IrcSocket } from "../lib/irc-socket.ts";
 import { loadViaPi, repoFile } from "./helpers.mjs";
 
 const { loadConfig, ConfigError } = await loadViaPi(repoFile("lib", "config.ts"));
+
 const here = dirname(fileURLToPath(import.meta.url));
+
 const CERT = fs.readFileSync(join(here, "ergo", "certs", "tls.crt"));
+
 const KEY = fs.readFileSync(join(here, "ergo", "certs", "tls.key"));
 
 /** Minimal real TLS listener: accepts, says nothing, closes on input end. */
 function tlsServer() {
 	const seen = [];
+
 	const server = tls.createServer({ cert: CERT, key: KEY }, (sock) => {
 		seen.push(sock.remoteAddress);
 		sock.on("data", () => sock.end());
 	});
+
 	server.listen(0, "127.0.0.1");
+
 	return { server, port: new Promise((res) => server.once("listening", () => res(server.address().port))) };
 }
 

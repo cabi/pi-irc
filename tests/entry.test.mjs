@@ -32,6 +32,7 @@ function mockPi() {
 			pi.userMessages.push({ content, options });
 		},
 	};
+
 	return pi;
 }
 
@@ -66,15 +67,21 @@ test("no config: registers nothing, notifies once on session_start", () => {
 	fs.mkdirSync(proj);
 	const prevCwd = process.cwd();
 	process.chdir(proj);
+
 	try {
 		const pi = mockPi();
 		extensionFactory(pi);
 		assert.equal(pi.tools.length, 0, "no tool without config");
 		const notes = [];
-		fire(pi, "session_start", { type: "session_start", reason: "startup" }, {
-			...makeCtx("/tmp/proj"),
-			ui: { notify: (m) => notes.push(m) },
-		});
+		fire(
+			pi,
+			"session_start",
+			{ type: "session_start", reason: "startup" },
+			{
+				...makeCtx("/tmp/proj"),
+				ui: { notify: (m) => notes.push(m) },
+			},
+		);
 		assert.equal(notes.length, 1);
 		assert.match(notes[0], /extension disabled/);
 	} finally {
@@ -94,8 +101,8 @@ test("enabled: boots against mock server, serves tool ops, wakes on DM, quits on
 	// human started pi in) — so run this test "inside" the fixture project.
 	const proj = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "pi-irc-proj-")), "proj");
 	fs.mkdirSync(proj);
-	const prevCwd = process.cwd();
 	process.chdir(proj);
+
 	try {
 		const pi = mockPi();
 		extensionFactory(pi);
@@ -109,7 +116,10 @@ test("enabled: boots against mock server, serves tool ops, wakes on DM, quits on
 		assert.match(res.content[0].text, /nick: pi-main-abcdef12/);
 		assert.match(res.content[0].text, /projectChannel: #pi-proj/);
 		const client = srv.lastClient();
-		assert.ok(client.lines.some((l) => l.startsWith("JOIN #pi-proj")), "project channel joined");
+		assert.ok(
+			client.lines.some((l) => l.startsWith("JOIN #pi-proj")),
+			"project channel joined",
+		);
 		assert.match(client.user, /pi-agent project=proj role=main session=abcdef12/);
 
 		// send flows through the queue to the mock server
@@ -159,6 +169,7 @@ test("presence: agent_start marks AWAY, agent_settled returns", async () => {
 	fs.mkdirSync(proj);
 	const prevCwd = process.cwd();
 	process.chdir(proj);
+
 	try {
 		const pi = mockPi();
 		extensionFactory(pi);
@@ -170,7 +181,7 @@ test("presence: agent_start marks AWAY, agent_settled returns", async () => {
 		fire(pi, "agent_start", { type: "agent_start" }, makeCtx("/tmp/proj"));
 		await new Promise((r) => setTimeout(r, 50));
 		assert.ok(
-			client.lines.some((l) => /^AWAY :busy since /.test(l)),
+			client.lines.some((l) => l.startsWith("AWAY :busy since ")),
 			`AWAY sent on agent_start: ${client.lines}`,
 		);
 

@@ -4,7 +4,7 @@
 		"port": 6697,
 		"tls": true,
 		"passwordEnv": "PI_IRC_PASSWORD",
-		"tlsInsecure": false,
+		"tlsInsecure": false
 		// "tlsCaFile": "~/.pi/agent/certs/irc.lan.pem"  // PEM of the internal CA / self-signed leaf — verified, not skipped
 	},
 	"auth": {

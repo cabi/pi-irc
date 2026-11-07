@@ -16,7 +16,7 @@ Operators running self-signed ergo/InspIRCd instances faced a false choice: `--u
 
 ### v0.3.1 — field fix: crash on server loss
 
-First real-world bug report: switching the local IRC server under a running pi crashed the host with `Unhandled error. ({ message: 'socket: ' })`. Root cause chain: `IrcSocket.connect()` attached its persistent `on("error")` re-emitter during the connect phase, so a refused connect surfaced both as the connect-promise rejection *and* as a transport `error` event; the client forwarded it (as a plain object, not an `Error`) before `IrcSession` had bound its listener — an unhandled `error` emit, which Node turns into an uncaught exception. Fix (a883017): data/error/close socket wiring moves into `onConnect` — until the connect promise settles, it is the sole error channel; TLS resolves on `secureConnect` only; the client forwards real `Error` instances. Regression test drives the real socket stack against a refused port with no listener bound (the old code kills the test runner). Validated against the operator's own ergo (v2.19.1, plaintext 6667 + TLS 6697): ergo-smoke 10/10, ergo-agents 10/10, presence 8/8, ask-reply 7/7, sasl-smoke 8/8 — 189 unit tests, typecheck clean.
+First real-world bug report: switching the local IRC server under a running pi crashed the host with `Unhandled error. ({ message: 'socket: ' })`. Root cause chain: `IrcSocket.connect()` attached its persistent `on("error")` re-emitter during the connect phase, so a refused connect surfaced both as the connect-promise rejection _and_ as a transport `error` event; the client forwarded it (as a plain object, not an `Error`) before `IrcSession` had bound its listener — an unhandled `error` emit, which Node turns into an uncaught exception. Fix (a883017): data/error/close socket wiring moves into `onConnect` — until the connect promise settles, it is the sole error channel; TLS resolves on `secureConnect` only; the client forwards real `Error` instances. Regression test drives the real socket stack against a refused port with no listener bound (the old code kills the test runner). Validated against the operator's own ergo (v2.19.1, plaintext 6667 + TLS 6697): ergo-smoke 10/10, ergo-agents 10/10, presence 8/8, ask-reply 7/7, sasl-smoke 8/8 — 189 unit tests, typecheck clean.
 
 ## Vision
 
@@ -34,15 +34,15 @@ The extension owns the machinery; the agent owns the conversation.
 
 ## Scope of v1
 
-| Surface | Name | Kind | Trigger |
-|---|---|---|---|
-| Agent messaging | `irc` (ops: connect, status, roster, send, read, join, part, help) | tool | anytime; `connect` is idempotent (no-op once up) |
-| Auto-registration | connect → identify → join project channel | background | `session_start` (or first tool use, lazy) |
-| Channel bootstrap | create-on-first-join + topic stamp | background | first agent of a project |
-| Roster tracking | NAMES/WHO(X)/JOIN/PART/QUIT/NICK → who's who | background | continuous |
-| Message buffering | per-conversation ring buffer + read cursors | background | continuous |
-| Wake-on-DM | direct message steers an idle agent | background | inbound PRIVMSG to our nick |
-| Human seat | any RFC-compliant IRC client joins the channel | external | none — that's the point |
+| Surface           | Name                                                               | Kind       | Trigger                                          |
+| ----------------- | ------------------------------------------------------------------ | ---------- | ------------------------------------------------ |
+| Agent messaging   | `irc` (ops: connect, status, roster, send, read, join, part, help) | tool       | anytime; `connect` is idempotent (no-op once up) |
+| Auto-registration | connect → identify → join project channel                          | background | `session_start` (or first tool use, lazy)        |
+| Channel bootstrap | create-on-first-join + topic stamp                                 | background | first agent of a project                         |
+| Roster tracking   | NAMES/WHO(X)/JOIN/PART/QUIT/NICK → who's who                       | background | continuous                                       |
+| Message buffering | per-conversation ring buffer + read cursors                        | background | continuous                                       |
+| Wake-on-DM        | direct message steers an idle agent                                | background | inbound PRIVMSG to our nick                      |
+| Human seat        | any RFC-compliant IRC client joins the channel                     | external   | none — that's the point                          |
 
 Not in v1: multi-server federation, message history beyond the buffer, push notifications for channel traffic.
 
@@ -98,7 +98,7 @@ Missing global config = extension disabled with one clear log line; wrong config
 ## Project-channel bootstrap (first agent wins)
 
 1. `session_start` (or first `irc` call): load merged config → establish connection (TLS, `PASS`?, `NICK` + `USER` with metadata).
-2. Join `channels.projectTemplate` channels — per RFC 2812 §4.2.1 the first JOIN *creates* the channel implicitly; no explicit creation protocol exists.
+2. Join `channels.projectTemplate` channels — per RFC 2812 §4.2.1 the first JOIN _creates_ the channel implicitly; no explicit creation protocol exists.
 3. If the channel was fresh (empty NAMES reply): stamp the topic from `topicTemplate` — the visible marker of ownership and creation time.
 4. Join any `channels.defaults`.
 5. Prepare roster + buffers; the session is now reachable.
@@ -107,15 +107,15 @@ All later agents of the project run the same flow and simply land in the existin
 
 ## The `irc` tool (agent surface)
 
-| Op | Returns / does | Prepared by |
-|---|---|---|
-| `connect` | Ensures connection + registration + joins; idempotent no-op when up | usually already done at session start |
-| `status` | My nick & role, project channel, joined channels, connection state, unread counts | background state, zero round-trips |
-| `roster` | Project-channel members: agent (project, main/sub, session, model) or human; online vs last-seen | NAMES + WHO(X) + join/part/quit stream |
-| `send` | Message a channel (default: project channel) or a nick (DM); chunked, flood-limited | send queue with rate limiting |
-| `read` | Unread messages since cursor (from/since/channel filters), advances cursor | ring buffer |
-| `join` / `part` | Extra channels on demand; the project channel cannot be parted | channel state |
-| `help` | Op reference with current context (nick, channels) | — |
+| Op              | Returns / does                                                                                   | Prepared by                            |
+| --------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------- |
+| `connect`       | Ensures connection + registration + joins; idempotent no-op when up                              | usually already done at session start  |
+| `status`        | My nick & role, project channel, joined channels, connection state, unread counts                | background state, zero round-trips     |
+| `roster`        | Project-channel members: agent (project, main/sub, session, model) or human; online vs last-seen | NAMES + WHO(X) + join/part/quit stream |
+| `send`          | Message a channel (default: project channel) or a nick (DM); chunked, flood-limited              | send queue with rate limiting          |
+| `read`          | Unread messages since cursor (from/since/channel filters), advances cursor                       | ring buffer                            |
+| `join` / `part` | Extra channels on demand; the project channel cannot be parted                                   | channel state                          |
+| `help`          | Op reference with current context (nick, channels)                                               | —                                      |
 
 ## Background machinery
 
@@ -232,8 +232,10 @@ pi-irc/
 **RPC envelope** (application text inside normal DMs; channels never interpret it):
 
 ```
+
 [pi-ask <id> timeout=600] question text…
 [pi-reply <id>] answer text…
+
 ```
 
 - `id`: 8-hex random, unique per outbound ask; `timeout` seconds, default 600
@@ -347,3 +349,4 @@ pi-irc/
 | buffer cursor | Per-session read position in a conversation's ring buffer; `read` advances it |
 | wake-on-DM | Steering an idle session when a direct message arrives; throttled, never triggered by channel chatter |
 | identity metadata | Machine-readable realname (`pi/1 project=… role=… session=…`) announcing an agent over `USER` |
+```

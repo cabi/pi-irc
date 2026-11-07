@@ -7,7 +7,9 @@ import { EventEmitter } from "node:events";
 import { loadViaPi, repoFile } from "./helpers.mjs";
 
 const { CapNegotiator, parseCapList, pickCaps } = await loadViaPi(repoFile("lib", "caps.ts"));
+
 const { IrcClient } = await loadViaPi(repoFile("lib", "irc-client.ts"));
+
 const { IrcSession } = await loadViaPi(repoFile("lib", "session.ts"));
 
 // ---------------------------------------------------------------- unit
@@ -22,10 +24,10 @@ test("parseCapList: splits, drops =values, ignores empties", () => {
 });
 
 test("pickCaps: wanted ∩ offered, case-insensitive, wanted order kept", () => {
-	assert.deepEqual(
-		pickCaps(["EXTENDED-JOIN", "server-time", "x"], ["server-time", "extended-join", "bogus"]),
-		["server-time", "extended-join"],
-	);
+	assert.deepEqual(pickCaps(["EXTENDED-JOIN", "server-time", "x"], ["server-time", "extended-join", "bogus"]), [
+		"server-time",
+		"extended-join",
+	]);
 });
 
 test("negotiator: happy path LS → REQ → ACK → END", () => {
@@ -155,7 +157,10 @@ test("client: full CAP flow emits capsEnabled, then registers on 001", () => {
 	ft.emit("line", ":srv 001 pi :Welcome");
 	assert.ok(ft.sent.includes("CAP REQ :server-time"));
 	assert.ok(ft.sent.includes("CAP END"));
-	assert.deepEqual(events, [["caps", "server-time"], ["registered", "pi"]]);
+	assert.deepEqual(events, [
+		["caps", "server-time"],
+		["registered", "pi"],
+	]);
 	assert.deepEqual(c.enabledCaps, ["server-time"]);
 });
 
@@ -202,19 +207,24 @@ class CapServer extends EventEmitter {
 	#autoAnswer(line) {
 		if (!this.#client) return;
 		const m = /^(\S+)(?:\s+(.*))?$/.exec(line);
+
 		if (!m) return;
 		const [, cmd, rest = ""] = m;
 		const me = this.#client.nick;
+
 		switch (cmd) {
 			case "CAP": {
 				const sub = rest.split(" ")[0].toUpperCase();
+
 				if (sub === "LS") {
 					this.say(":srv CAP * LS :extended-join server-time away-notify chghost");
 				} else if (sub === "REQ") {
 					this.say(`:srv CAP * ACK ${rest.slice(4)}`); // "REQ :a b" → "ACK :a b"
 				}
+
 				break;
 			}
+
 			case "JOIN": {
 				for (const chan of rest.split(",")) {
 					this.say(`:${me}!pi@h JOIN ${chan}`);
@@ -222,17 +232,21 @@ class CapServer extends EventEmitter {
 					this.say(`:srv 353 ${me} = ${chan} :${me}`);
 					this.say(`:srv 366 ${me} ${chan} :End of /NAMES list.`);
 				}
+
 				break;
 			}
+
 			case "TOPIC": {
 				this.say(`:srv 331 ${me} ${rest} :No topic is set`);
 				break;
 			}
+
 			case "WHO": {
 				const mask = rest.split(" ")[0];
 				this.say(`:srv 315 ${me} ${mask} :End of WHO list`);
 				break;
 			}
+
 			default:
 				break;
 		}
@@ -256,20 +270,24 @@ const config = {
 	delivery: { bufferMax: 50, wakeOnDirectMessage: true, chunkLongSends: true },
 	projectSlug: "proj",
 };
+
 const ident = { project: "proj", role: "main", shortId: "s1" };
 
 async function bootCaps() {
 	const srv = new CapServer();
+
 	const client = new IrcClient(
 		{ nick: "pi-main-s1", username: "pi", realname: "pi-agent:main:proj:s1", caps: config.capabilities.request },
 		srv,
 	);
+
 	srv.bind(client);
 	client.startRegistration();
 	srv.say(":srv 001 pi-main-s1 :Welcome");
 	const pending = IrcSession.connect(config, ident, { client });
 	srv.say(":srv 376 pi-main-s1 :End of MOTD");
 	const session = await pending;
+
 	return { srv, client, session };
 }
 
@@ -315,7 +333,10 @@ test("session: plain JOIN (no extended-join params) still falls back to WHO", as
 	const { srv, session } = await bootCaps();
 	srv.say(":pi-worker-s9!pi@h JOIN #pi-proj");
 	await new Promise((r) => setTimeout(r, 5));
-	assert.ok(srv.lines.some((l) => l.startsWith("WHO ")), "WHO sent");
+	assert.ok(
+		srv.lines.some((l) => l.startsWith("WHO ")),
+		"WHO sent",
+	);
 	session.stop();
 });
 

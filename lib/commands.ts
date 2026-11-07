@@ -39,8 +39,10 @@ export interface ParsedIrcCommand {
  */
 export function parseIrcCommand(args: string): ParsedIrcCommand {
 	const parts = args.trim().split(/\s+/).filter(Boolean);
+
 	if (parts.length === 0) return { op: "status" };
 	const [sub, ...rest] = parts;
+
 	switch (sub) {
 		case "status":
 			return { op: "status" };
@@ -50,25 +52,34 @@ export function parseIrcCommand(args: string): ParsedIrcCommand {
 			const out: ParsedIrcCommand = { op: "read" };
 			const numbers = rest.filter((t) => /^\d+$/.test(t));
 			const convs = rest.filter((t) => !/^\d+$/.test(t));
+
 			if (convs.length > 1) {
 				return { op: "read", error: "usage: /irc read [#channel|nick] [limit]" };
 			}
+
 			if (convs[0] !== undefined) out.conversation = convs[0];
+
 			for (const n of numbers) {
 				const limit = Number(n);
+
 				if (limit < 1 || limit > 500) {
 					return { op: "read", error: `limit must be 1..500, got ${n}` };
 				}
+
 				out.limit = limit;
 			}
+
 			return out;
 		}
+
 		case "send": {
 			if (rest.length < 2) {
 				return { op: "send", error: "usage: /irc send <#channel|nick> <text>" };
 			}
+
 			return { op: "send", target: rest[0], text: rest.slice(1).join(" ") };
 		}
+
 		default:
 			return { op: "help", error: `unknown subcommand "${sub}" — try /irc help` };
 	}
@@ -80,14 +91,18 @@ export async function runIrcCommand(
 	args: string,
 ): Promise<{ message: string; level: "info" | "warning" }> {
 	const parsed = parseIrcCommand(args);
+
 	if (parsed.error) return { message: `pi-irc: ${parsed.error}`, level: "warning" };
+
 	if (parsed.op === "help") return { message: IRC_COMMAND_HELP, level: "info" };
+
 	const r = await executeIrcOp(ensureSession, parsed.op, {
 		op: parsed.op,
 		target: parsed.target,
 		text: parsed.text,
 		conversation: parsed.conversation,
 		limit: parsed.limit,
-});
+	});
+
 	return { message: r.content.map((c) => c.text).join("\n"), level: "info" };
 }

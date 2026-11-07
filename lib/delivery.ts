@@ -54,51 +54,67 @@ interface QueueItem {
  */
 export function chunkText(text: string, maxChunk: number): string[] {
 	if (maxChunk < 8) throw new Error("maxChunk must be >= 8");
+
 	if (byteLength(text) <= maxChunk) return [text];
 	const chunks: string[] = [];
 	let start = 0;
+
 	while (start < text.length) {
 		let bytes = 0;
 		let end = start;
 		let lastSpace = -1;
 		let bytesAtSpace = 0;
+
 		while (end < text.length) {
 			const size = charBytes(text, end);
+
 			if (bytes + size > maxChunk) break;
+
 			if (text.charCodeAt(end) === 0x20) {
 				lastSpace = end;
 				bytesAtSpace = bytes;
 			}
+
 			bytes += size;
 			end += size === 4 ? 2 : 1; // surrogate pair advances two units
 		}
+
 		// Prefer a word boundary unless it would shrink the chunk below half budget.
 		let cut = end;
+
 		if (end < text.length && lastSpace > start && bytesAtSpace >= Math.ceil(maxChunk / 2)) cut = lastSpace;
 		chunks.push(text.slice(start, cut));
 		// A space split consumes the space; a hard split consumes exactly what fit.
 		start = cut === lastSpace ? cut + 1 : cut;
 	}
+
 	return chunks;
 }
 
 /** UTF-8 byte length of one code point at index i (surrogate pair = 4). */
 function charBytes(s: string, i: number): number {
 	const code = s.charCodeAt(i);
+
 	if (code < 0x80) return 1;
+
 	if (code < 0x800) return 2;
+
 	if (code >= 0xd800 && code <= 0xdbff) return 4;
+
 	if (code >= 0xdc00 && code <= 0xdfff) return 0; // low half of a pair
+
 	return 3;
 }
 
 function byteLength(s: string): number {
 	let bytes = 0;
-	for (let i = 0; i < s.length; ) {
+
+	for (let i = 0; i < s.length;) {
 		const size = charBytes(s, i) || 1; // orphan low surrogate: degenerate, count as 1
 		bytes += size;
 		i += size === 4 ? 2 : 1;
 	}
+
 	return bytes;
 }
 
@@ -135,19 +151,26 @@ export class DeliveryQueue {
 	 * the caller instead of unbounded memory growth. */
 	enqueue(target: string, text: string): number {
 		const queued = this.pending() + 1; // ≥1 chunk for this item after split
+
 		if (this.opts.chunkLong) {
 			const chunks = chunkText(text, this.opts.maxChunk);
+
 			if (this.pending() + chunks.length > this.opts.maxQueue) {
 				throw new Error(`delivery queue full (${this.pending()} chunks queued, max ${this.opts.maxQueue})`);
 			}
+
 			const n = chunks.length;
 			this.queue.push({ target, chunks, part: n > 1 ? { i: 0, n } : null, nextIndex: 0 });
+
 			return n;
 		}
+
 		if (queued > this.opts.maxQueue) {
 			throw new Error(`delivery queue full (${this.pending()} chunks queued, max ${this.opts.maxQueue})`);
 		}
+
 		this.queue.push({ target, chunks: [text], part: null, nextIndex: 0 });
+
 		return 1;
 	}
 
@@ -157,21 +180,27 @@ export class DeliveryQueue {
 	 */
 	drain(now = Date.now()): OutboundChunk[] {
 		const sent: OutboundChunk[] = [];
+
 		if (this.paused) return sent;
+
 		while (this.queue.length > 0) {
 			// Refill one token per interval since the last send.
 			if (this.tokens < this.opts.burst && this.lastSendAt !== null) {
 				const earned = Math.floor((now - this.lastSendAt) / this.opts.intervalMs);
+
 				if (earned > 0) {
 					this.tokens = Math.min(this.opts.burst, this.tokens + earned);
 					this.lastSendAt = now - ((now - this.lastSendAt) % this.opts.intervalMs);
 				}
 			}
+
 			if (this.tokens <= 0) break;
 			const item = this.queue[0];
 			const text = item.chunks[item.nextIndex];
 			let part: OutboundChunk["part"];
+
 			if (item.part) part = { i: item.nextIndex + 1, n: item.part.n };
+
 			try {
 				this.sender(item.target, text);
 			} catch (err) {
@@ -183,19 +212,24 @@ export class DeliveryQueue {
 					item.nextIndex += 1;
 					this.tokens -= 1;
 					this.lastSendAt = now;
+
 					if (item.nextIndex >= item.chunks.length) this.queue.shift();
 					continue;
 				}
+
 				// Transport died mid-drain: leave the chunk queued (indices
 				// untouched) — pause()/socketClosed owns the state from here.
 				break;
 			}
+
 			sent.push({ target: item.target, text, part });
 			item.nextIndex += 1;
 			this.tokens -= 1;
 			this.lastSendAt = now;
+
 			if (item.nextIndex >= item.chunks.length) this.queue.shift();
 		}
+
 		return sent;
 	}
 

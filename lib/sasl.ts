@@ -29,9 +29,12 @@ export function saslPlainPayload(username: string, password: string): string {
 export function authChunks(payload: string): string[] {
 	if (payload.length === 0) return ["+"];
 	const out: string[] = [];
+
 	for (let i = 0; i < payload.length; i += SASL_MAX_CHUNK) {
 		out.push(payload.slice(i, i + SASL_MAX_CHUNK));
 	}
+
 	if (out[out.length - 1].length === SASL_MAX_CHUNK) out.push("+");
+
 	return out;
 }

@@ -51,8 +51,11 @@ test("help text lists all subcommands", () => {
 // ------------------------------------------------- live run (mock server)
 
 const { runIrcCommand } = await loadViaPi(repoFile("lib", "commands.ts"));
+
 const { IrcSession } = await loadViaPi(repoFile("lib", "session.ts"));
+
 const { IrcClient } = await loadViaPi(repoFile("lib", "irc-client.ts"));
+
 const { EventEmitter } = await import("node:events");
 
 class CaplessServer extends EventEmitter {
@@ -71,13 +74,16 @@ class CaplessServer extends EventEmitter {
 	#autoAnswer(line) {
 		const [, cmd, rest = ""] = /^(\S+)(?:\s+(.*))?$/.exec(line) ?? [];
 		const me = this.#client?.nick;
+
 		if (cmd === "TOPIC") {
 			this.say(`:srv 331 ${me} ${rest} :No topic is set`);
 		}
+
 		if (cmd === "WHO") {
 			this.say(`:srv 352 ${me} ${rest} u h srv carol H :0 Carsten`);
 			this.say(`:srv 315 ${me} ${rest} :End of /WHO list`);
 		}
+
 		if (cmd === "JOIN") {
 			for (const chan of rest.split(",")) {
 				this.say(`:${me}!pi@h JOIN ${chan}`);
@@ -105,17 +111,24 @@ const cfg = {
 	delivery: { bufferMax: 50, wakeOnDirectMessage: true, chunkLongSends: true },
 	projectSlug: "proj",
 };
+
 const ident = { project: "proj", role: "main", shortId: "s1" };
 
 async function boot() {
 	const srv = new CaplessServer();
-	const client = new IrcClient({ nick: "pi-main-s1", username: "pi", realname: "pi-agent project=proj role=main session=s1" }, srv);
+
+	const client = new IrcClient(
+		{ nick: "pi-main-s1", username: "pi", realname: "pi-agent project=proj role=main session=s1" },
+		srv,
+	);
+
 	srv.bind(client);
 	client.startRegistration();
 	srv.say(":srv 001 pi-main-s1 :Welcome");
 	const pending = IrcSession.connect(cfg, ident, { client });
 	srv.say(":srv 376 pi-main-s1 :End of MOTD");
 	const session = await pending;
+
 	return { srv, session, run: (args) => runIrcCommand(async () => session, args) };
 }
 

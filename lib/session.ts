@@ -32,13 +32,8 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import {
-	AskRegistry,
-	ReplyAssembler,
-	envelopeParts,
-	parseEnvelope,
-	type AskResolution,
-} from "./rpc.ts";
+import { AskRegistry, ReplyAssembler, envelopeParts, parseEnvelope, type AskResolution } from "./rpc.ts";
+
 export interface SessionDeps {
 	/** Injectable for tests: an already-registered client (skips PASS/001). */
 	client?: IrcClient;
@@ -64,6 +59,7 @@ export interface ReconnectSpec {
 const defaultSchedule = (fn: () => void, ms: number): (() => void) => {
 	const t = setTimeout(fn, ms);
 	t.unref?.();
+
 	return () => clearTimeout(t);
 };
 
@@ -88,8 +84,10 @@ function connectOptsFor(config: PiIrcConfig): {
 } {
 	const s = config.server;
 	let ca: Buffer | undefined;
+
 	if (s.tls && s.tlsCaFile) {
 		const path = s.tlsCaFile.startsWith("~/") ? join(homedir(), s.tlsCaFile.slice(2)) : s.tlsCaFile;
+
 		try {
 			ca = readFileSync(path);
 		} catch (err) {
@@ -98,6 +96,7 @@ function connectOptsFor(config: PiIrcConfig): {
 			throw new Error(`server.tlsCaFile unreadable (${path}): ${(err as Error).message}`);
 		}
 	}
+
 	return {
 		host: s.host,
 		port: s.port,
@@ -108,13 +107,18 @@ function connectOptsFor(config: PiIrcConfig): {
 		...(ca ? { ca } : {}),
 	};
 }
+
 // Wake throttle: damp DM bursts, don't suppress distinct turns. Intercom
 // parity means a follow-up DM after a settled turn still wakes the peer.
 const WAKE_QUIET_MS = 5_000;
+
 const DEFAULT_ASK_TIMEOUT_SEC = 600;
+
 /** Roster ghosts (peers whose departure we never learned) expire after a day. */
 const ROSTER_TTL_MS = 24 * 60 * 60 * 1000;
+
 const ROSTER_SWEEP_MS = 60 * 60 * 1000;
+
 /** Batch foreign-join WHO lookups on RFC 2812 servers into one flush. */
 const WHO_FLUSH_MS = 500;
 
@@ -134,7 +138,7 @@ export class IrcSession extends EventEmitter {
 	#reconnectAttempt = 0;
 	#cancelKickRejoin: (() => void) | null = null;
 
-/** msgids already buffered — kills replay/live double delivery. */
+	/** msgids already buffered — kills replay/live double delivery. */
 	#seenMsgIds = new Set<string>();
 	/** Pending WHO lookups on servers without extended-join — deduped, flushed in one batch. */
 	#whoPending = new Set<string>();
@@ -170,16 +174,13 @@ export class IrcSession extends EventEmitter {
 		this.#historyLimit = config.history?.catchupLimit ?? 0;
 		this.#backoff = new Backoff(reconnect?.backoff);
 		this.buffer = new MessageBuffer(config.delivery.bufferMax, client.realNick ?? client.nick);
-		this.delivery = new DeliveryQueue(
-			(target, text) => this.client.privmsg(target, text),
-			{
-				burst: config.delivery.burst,
-				intervalMs: config.delivery.intervalMs,
-				maxChunk: 400,
-				maxQueue: config.delivery.maxQueue,
-				chunkLong: config.delivery.chunkLongSends,
-			},
-		);
+		this.delivery = new DeliveryQueue((target, text) => this.client.privmsg(target, text), {
+			burst: config.delivery.burst,
+			intervalMs: config.delivery.intervalMs,
+			maxChunk: 400,
+			maxQueue: config.delivery.maxQueue,
+			chunkLong: config.delivery.chunkLongSends,
+		});
 		this.delivery.onDrop = (target, text, err) =>
 			console.warn(`pi-irc: dropped unsendable chunk to ${target} (${err.message}): ${text.slice(0, 60)}…`);
 		this.#wireEvents();
@@ -193,20 +194,20 @@ export class IrcSession extends EventEmitter {
 	 * roster seeded; rejects on any hard failure (connect refused,
 	 * registration rejected, join failed, WHO timeout).
 	 */
-	static async connect(
-		config: PiIrcConfig,
-		identity: IdentityContext,
-		deps: SessionDeps = {},
-	): Promise<IrcSession> {
+	static async connect(config: PiIrcConfig, identity: IdentityContext, deps: SessionDeps = {}): Promise<IrcSession> {
 		const now = deps.now ?? Date.now;
 		const password = config.server.passwordEnv ? process.env[config.server.passwordEnv] : undefined;
 		let sasl: { username: string; password: string } | undefined;
+
 		if (config.auth) {
 			const saslPassword = config.auth.password ?? process.env[config.auth.passwordEnv ?? ""];
+
 			if (!saslPassword) throw new Error(`SASL password missing (env ${config.auth.passwordEnv ?? "?"} unset)`);
 			sasl = { username: config.auth.username, password: saslPassword };
 		}
+
 		let client = deps.client;
+
 		if (client) {
 			// Injected client: registration is the fixture's business.
 			if (client.state !== "registered") {
@@ -233,17 +234,21 @@ export class IrcSession extends EventEmitter {
 			// miss motdEnd entirely.
 			const registeredP = onceOrThrow(client, "registered", "error", BOOT_TIMEOUT_MS, "registration");
 			const motdP = onceOrThrow(client, "motdEnd", "error", BOOT_TIMEOUT_MS, "registration (MOTD)");
+
 			if (password) client.sendRaw(wire.pass(password));
 			client.startRegistration();
 			await registeredP;
 			await motdP;
 		}
+
 		if (deps.client) await onceOrThrow(client, "motdEnd", "error", BOOT_TIMEOUT_MS, "registration (MOTD)");
 
 		// Reconnect policy: real (socket-backed) sessions always get one;
 		// injected test clients only when the fixture provides a factory.
 		const reconnect: ReconnectSpec | null = deps.client
-			? (deps.reconnect?.transportFactory ? ({ ...deps.reconnect } as ReconnectSpec) : null)
+			? deps.reconnect?.transportFactory
+				? ({ ...deps.reconnect } as ReconnectSpec)
+				: null
 			: { transportFactory: () => new IrcSocket(), password, ...deps.reconnect };
 
 		const session = new IrcSession(config, identity, client, now, reconnect);
@@ -254,37 +259,63 @@ export class IrcSession extends EventEmitter {
 		// async on a socket) join echoes cannot slip past them.
 		const chan = session.projectChannel;
 		const extra = config.channels.defaults.filter((c) => c.toLowerCase() !== chan.toLowerCase());
+
 		const projectJoined = onceOrThrow<{ self: boolean; channel: string }>(
-			client, "join", "error", BOOT_TIMEOUT_MS, `joining ${chan}`,
+			client,
+			"join",
+			"error",
+			BOOT_TIMEOUT_MS,
+			`joining ${chan}`,
 			(e) => e.self && e.channel.toLowerCase() === chan.toLowerCase(),
 		);
-		const extrasJoined = extra.map((c) => onceOrThrow<{ self: boolean; channel: string }>(
-			client, "join", "error", BOOT_TIMEOUT_MS, `joining ${c}`,
-			(e) => e.self && e.channel.toLowerCase() === c.toLowerCase(),
-		));
+
+		const extrasJoined = extra.map((c) =>
+			onceOrThrow<{ self: boolean; channel: string }>(
+				client,
+				"join",
+				"error",
+				BOOT_TIMEOUT_MS,
+				`joining ${c}`,
+				(e) => e.self && e.channel.toLowerCase() === c.toLowerCase(),
+			),
+		);
+
 		client.join([chan, ...extra]);
 		await projectJoined;
 		await Promise.all(extrasJoined);
 
 		// Seed the roster: WHO returns realnames → agent/human mapping.
 		client.who(chan);
-		await onceOrThrow<IrcMessage>(client, "message", "error", BOOT_TIMEOUT_MS, `WHO ${chan}`, (m) =>
-			m.command === String(NUMERICS.RPL_ENDOFWHO) && m.params[1]?.toLowerCase() === chan.toLowerCase(),
+		await onceOrThrow<IrcMessage>(
+			client,
+			"message",
+			"error",
+			BOOT_TIMEOUT_MS,
+			`WHO ${chan}`,
+			(m) => m.command === String(NUMERICS.RPL_ENDOFWHO) && m.params[1]?.toLowerCase() === chan.toLowerCase(),
 		);
 
 		// Topic stamp on a fresh channel. Ergo (and others) only answer a
 		// topic QUERY with 331 — they don't volunteer it on JOIN — so ask.
 		if (config.channels.autoCreate) {
 			client.topic(chan);
-			await onceOrThrow<IrcMessage>(client, "message", "error", BOOT_TIMEOUT_MS, `TOPIC ${chan}`, (m) =>
-				(m.command === String(NUMERICS.RPL_TOPIC) || m.command === String(NUMERICS.RPL_NOTOPIC)) &&
-				m.params[1]?.toLowerCase() === chan.toLowerCase(),
+			await onceOrThrow<IrcMessage>(
+				client,
+				"message",
+				"error",
+				BOOT_TIMEOUT_MS,
+				`TOPIC ${chan}`,
+				(m) =>
+					(m.command === String(NUMERICS.RPL_TOPIC) || m.command === String(NUMERICS.RPL_NOTOPIC)) &&
+					m.params[1]?.toLowerCase() === chan.toLowerCase(),
 			);
+
 			if (session.topicStampPending) {
 				client.topic(chan, renderStamp(config.channels.topicTemplate, config.projectSlug, now()));
 				session.topicStampPending = false;
 			}
 		}
+
 		return session;
 	}
 
@@ -295,21 +326,25 @@ export class IrcSession extends EventEmitter {
 			if (e.msgid) {
 				if (this.#seenMsgIds.has(e.msgid)) return;
 				this.#seenMsgIds.add(e.msgid);
+
 				if (this.#seenMsgIds.size > 8_000) {
 					// Ring eviction, not clear(): a full wipe would reopen the
 					// replay/live overlap window for every buffered msgid.
 					for (const oldest of this.#seenMsgIds) {
 						this.#seenMsgIds.delete(oldest);
+
 						if (this.#seenMsgIds.size <= 8_000) break;
 					}
 				}
 			}
+
 			// Lines inside a batch are server-replayed history: buffered like
 			// live ones (so `read` shows them) but never wake anyone.
 			const replay = e.batch !== undefined;
 			// server-time: trust the server's ISO 8601 stamp when present.
 			const ts = e.time !== undefined ? Date.parse(e.time) : undefined;
 			const at = ts !== undefined && Number.isFinite(ts) ? ts : undefined;
+
 			if (/^[#&+!]/.test(e.target)) {
 				// Channel chatter: buffer under the channel, never wake.
 				this.buffer.push({ conv: e.target, from: e.from, text: e.text, ...(at ? { ts: at } : {}) });
@@ -317,6 +352,7 @@ export class IrcSession extends EventEmitter {
 			} else if (!e.toSelf) {
 				// DM to us: envelopes first, plain text second.
 				const env = parseEnvelope(e.text);
+
 				if (env?.kind === "ask") {
 					const inbound = this.rpc.trackInbound(env.id, e.from, env.body);
 					this.buffer.push({
@@ -327,9 +363,11 @@ export class IrcSession extends EventEmitter {
 						...(at ? { ts: at } : {}),
 					});
 					this.roster.touch(e.from);
+
 					if (!replay) this.#maybeWake(e.from, env.body);
 				} else if (env?.kind === "reply") {
 					const joined = this.#replies.add(e.from, env.id, env.part, env.body);
+
 					if (joined !== null && this.rpc.resolveReply(env.id, joined, e.from)) {
 						// Answer to one of our waiting asks — no wake: the asker
 						// is blocked inside the ask() tool call of a live turn.
@@ -350,8 +388,9 @@ export class IrcSession extends EventEmitter {
 							kind: "dm",
 							...(at ? { ts: at } : {}),
 						});
-					this.roster.touch(e.from);
-					if (!replay) this.#maybeWake(e.from, e.text);
+						this.roster.touch(e.from);
+
+						if (!replay) this.#maybeWake(e.from, e.text);
 					}
 				} else {
 					// DM to us: buffer under the sender's nick, consider a wake.
@@ -363,6 +402,7 @@ export class IrcSession extends EventEmitter {
 						...(at ? { ts: at } : {}),
 					});
 					this.roster.touch(e.from);
+
 					if (!replay) this.#maybeWake(e.from, e.text);
 				}
 			}
@@ -374,23 +414,28 @@ export class IrcSession extends EventEmitter {
 		});
 		c.on("join", (e) => {
 			this.channels.addMember(e.channel, e.nick);
-		this.roster.touch(e.nick, e.self
-			? { self: true }
-			// extended-join account: "*" means logged out; store only real
-			// accounts — they authenticate against services and gate wake.
-			: e.account !== undefined && e.account !== "*"
-				? { account: e.account }
-				: {});
-		// Self-join = fresh channel view: pull recent history in the
-		// background (no-op without draft/chathistory or with limit 0).
-		if (e.self && this.#historyLimit > 0) {
-			void this.#catchup(e.channel, this.#historyLimit);
-		}
+			this.roster.touch(
+				e.nick,
+				e.self
+					? { self: true }
+					: // extended-join account: "*" means logged out; store only real
+						// accounts — they authenticate against services and gate wake.
+						e.account !== undefined && e.account !== "*"
+						? { account: e.account }
+						: {},
+			);
+
+			// Self-join = fresh channel view: pull recent history in the
+			// background (no-op without draft/chathistory or with limit 0).
+			if (e.self && this.#historyLimit > 0) {
+				void this.#catchup(e.channel, this.#historyLimit);
+			}
+
 			// extended-join hands us the realname with the JOIN itself;
 			// only fall back to WHO when the server didn't.
 			if (!e.self && e.realname !== undefined) {
 				this.roster.applyRealname(e.nick, e.realname);
-		} else if (!e.self) {
+			} else if (!e.self) {
 				this.#queueWho(e.nick); // learn the newcomer's realname (batched)
 			}
 		});
@@ -398,11 +443,12 @@ export class IrcSession extends EventEmitter {
 			if (e.self) this.channels.part(e.channel);
 			else {
 				this.channels.removeMember(e.channel, e.nick);
+
 				// Gone from every shared channel → not a peer anymore. (Still
 				// sharing one → keep the entry; QUIT remains the hard signal.)
 				if (!this.channels.memberAnywhere(e.nick)) this.roster.forget(e.nick);
 			}
-	});
+		});
 		c.on("away", (e) => this.roster.touch(e.nick, { away: e.away }));
 		c.on("kick", (e) => this.#handleKick(e));
 		c.on("quit", (e) => {
@@ -426,11 +472,13 @@ export class IrcSession extends EventEmitter {
 	#queueWho(nick: string): void {
 		if (this.#whoPending.has(nick)) return;
 		this.#whoPending.add(nick);
+
 		if (this.#whoTimer) return;
 		this.#whoTimer = setTimeout(() => {
 			this.#whoTimer = null;
 			const nicks = [...this.#whoPending];
 			this.#whoPending.clear();
+
 			for (const n of nicks) this.client.who(n);
 		}, WHO_FLUSH_MS);
 		this.#whoTimer.unref?.();
@@ -460,6 +508,7 @@ export class IrcSession extends EventEmitter {
 	async #tryReconnect(): Promise<void> {
 		if (this.stopped || !this.#reconnect) return;
 		const attempt = this.#reconnectAttempt;
+
 		try {
 			await this.#reestablish();
 			this.#backoff.reset();
@@ -477,10 +526,12 @@ export class IrcSession extends EventEmitter {
 	/** Fresh transport → re-register → rejoin everything → reseed roster → flush queue. */
 	async #reestablish(): Promise<void> {
 		const spec = this.#reconnect;
+
 		if (!spec) throw new Error("no reconnect policy");
 		const transport = spec.transportFactory();
 		await transport.connect(connectOptsFor(this.config));
 		this.client.attach(transport);
+
 		if (spec.password) this.client.sendRaw(wire.pass(spec.password));
 		const registeredP = onceOrThrow(this.client, "registered", "error", BOOT_TIMEOUT_MS, "re-registration");
 		const motdP = onceOrThrow(this.client, "motdEnd", "error", BOOT_TIMEOUT_MS, "re-registration (MOTD)");
@@ -492,19 +543,31 @@ export class IrcSession extends EventEmitter {
 		// JOIN even where channels.joined() says yes: local state survived,
 		// server-side membership did not.
 		const chans = this.channels.list().map((ch) => ch.name);
+
 		if (chans.length > 0) {
 			const echoes = chans.map((ch) =>
 				onceOrThrow<{ self: boolean; channel: string }>(
-					this.client, "join", "error", BOOT_TIMEOUT_MS, `rejoining ${ch}`,
+					this.client,
+					"join",
+					"error",
+					BOOT_TIMEOUT_MS,
+					`rejoining ${ch}`,
 					(e) => e.self && e.channel.toLowerCase() === ch.toLowerCase(),
 				),
 			);
+
 			this.client.join(chans);
 			await Promise.all(echoes);
+
 			for (const ch of chans) {
 				this.client.who(ch);
-				await onceOrThrow<IrcMessage>(this.client, "message", "error", BOOT_TIMEOUT_MS, `WHO ${ch}`, (m) =>
-					m.command === String(NUMERICS.RPL_ENDOFWHO) && m.params[1]?.toLowerCase() === ch.toLowerCase(),
+				await onceOrThrow<IrcMessage>(
+					this.client,
+					"message",
+					"error",
+					BOOT_TIMEOUT_MS,
+					`WHO ${ch}`,
+					(m) => m.command === String(NUMERICS.RPL_ENDOFWHO) && m.params[1]?.toLowerCase() === ch.toLowerCase(),
 				);
 			}
 		}
@@ -521,8 +584,10 @@ export class IrcSession extends EventEmitter {
 	#handleKick(e: { nick: string; by: string; channel: string; reason: string; self: boolean }): void {
 		if (!e.self) {
 			this.channels.removeMember(e.channel, e.nick);
+
 			return;
 		}
+
 		this.channels.part(e.channel);
 		this.buffer.push({
 			conv: e.channel,
@@ -534,59 +599,69 @@ export class IrcSession extends EventEmitter {
 		this.#cancelKickRejoin?.();
 		this.#cancelKickRejoin = null;
 		const delay = this.config.channels.kickRejoinDelayMs;
+
 		if (delay <= 0 || this.stopped) return;
 		this.#cancelKickRejoin = defaultSchedule(() => {
 			this.#cancelKickRejoin = null;
+
 			if (this.stopped) return;
 			this.client.join([e.channel]);
 		}, delay);
 	}
 	#applyNumeric(m: { command: string; params: string[] }): void {
 		const p = m.params;
+
 		switch (m.command) {
 			case String(NUMERICS.RPL_NAMREPLY): {
 				// <me> <symbol> <channel> :nick nick nick
 				const chan = p[2] ?? "";
 				const names = (p[3] ?? "").split(" ").filter(Boolean);
 				this.channels.names(chan, names);
+
 				for (const n of names) this.roster.touch(n.replace(/^[~&@%+]+/, ""));
 				break;
 			}
+
 			case String(NUMERICS.RPL_TOPIC): {
 				this.channels.setTopic(p[1] ?? "", p[2] ?? "");
 				this.topicStampPending = false;
 				break;
 			}
+
 			case String(NUMERICS.RPL_NOTOPIC): {
 				if (p[1]?.toLowerCase() === this.projectChannel.toLowerCase()) this.topicStampPending = true;
 				break;
 			}
-		case String(NUMERICS.RPL_UNAWAY): {
-			// 305: our own AWAY cleared (or never set).
-			this.roster.touch(this.client.realNick ?? this.client.nick, { away: false, self: true });
-			this.buffer.push({
-				conv: "*",
-				from: "*",
-				text: "presence: back (no longer away)",
-				kind: "system",
-			});
-			break;
-		}
-		case String(NUMERICS.RPL_NOWAWAY): {
-			// 306: server confirmed our AWAY.
-			this.roster.touch(this.client.realNick ?? this.client.nick, { away: true, self: true });
-			this.buffer.push({
-				conv: "*",
-				from: "*",
-				text: "presence: marked away (busy)",
-				kind: "system",
-			});
-			break;
-		}
-		case String(NUMERICS.RPL_WHOREPLY): {
+
+			case String(NUMERICS.RPL_UNAWAY): {
+				// 305: our own AWAY cleared (or never set).
+				this.roster.touch(this.client.realNick ?? this.client.nick, { away: false, self: true });
+				this.buffer.push({
+					conv: "*",
+					from: "*",
+					text: "presence: back (no longer away)",
+					kind: "system",
+				});
+				break;
+			}
+
+			case String(NUMERICS.RPL_NOWAWAY): {
+				// 306: server confirmed our AWAY.
+				this.roster.touch(this.client.realNick ?? this.client.nick, { away: true, self: true });
+				this.buffer.push({
+					conv: "*",
+					from: "*",
+					text: "presence: marked away (busy)",
+					kind: "system",
+				});
+				break;
+			}
+
+			case String(NUMERICS.RPL_WHOREPLY): {
 				// <me> <chan> <user> <host> <server> <nick> <flags> :<hop> <gecos>
 				const nick = p[5];
 				const gecos = p[7] ?? "";
+
 				if (nick) {
 					this.roster.applyRealname(nick, gecos.split(" ").slice(1).join(" ") || gecos);
 					// WHO flags: H = here, G = gone (away). Only meaningful when
@@ -594,11 +669,14 @@ export class IrcSession extends EventEmitter {
 					const flags = p[6] ?? "";
 					this.roster.touch(nick, { away: flags.includes("G") ? true : flags.includes("H") ? false : undefined });
 				}
+
 				break;
 			}
-		case String(NUMERICS.RPL_WHOSPCRPL): {
+
+			case String(NUMERICS.RPL_WHOSPCRPL): {
 				// WHOX %uhnafr: <me> <user> <host> <nick> <flags> <account> :<realname>
 				const [, , , nick, flags, account, gecos = ""] = p;
+
 				if (nick) {
 					this.roster.applyRealname(nick, gecos);
 					// "0" (WHOX) and "*" (extended-join) both mean logged out.
@@ -608,8 +686,10 @@ export class IrcSession extends EventEmitter {
 						...(acct ? { account: acct } : {}),
 					});
 				}
+
 				break;
 			}
+
 			default:
 				break;
 		}
@@ -617,6 +697,7 @@ export class IrcSession extends EventEmitter {
 
 	#pendingReconnect(): { attempt: number; nextInMs: number } | null {
 		if (this.#cancelScheduled === null || this.#nextAttemptAt === null) return null;
+
 		return { attempt: this.#reconnectAttempt, nextInMs: Math.max(0, this.#nextAttemptAt - this.now()) };
 	}
 
@@ -634,8 +715,9 @@ export class IrcSession extends EventEmitter {
 		}
 	}
 
-#maybeWake(from: string, text: string): void {
+	#maybeWake(from: string, text: string): void {
 		if (!this.config.delivery.wakeOnDirectMessage) return;
+
 		if (!this.#wakeTrusted(from)) {
 			this.buffer.push({
 				conv: from,
@@ -643,9 +725,12 @@ export class IrcSession extends EventEmitter {
 				text: `(DM buffered — ${from} is not wake-trusted (tier ${this.config.delivery.wakeTrust ?? "account"}): no qualifying account/project match and not on the wake allowlist)`,
 				kind: "system",
 			});
+
 			return;
 		}
+
 		const now = this.now();
+
 		if (now - this.lastWakeAt < WAKE_QUIET_MS) return;
 		this.lastWakeAt = now;
 		this.emit("wake", { from, text });
@@ -667,12 +752,17 @@ export class IrcSession extends EventEmitter {
 		const allowed = (this.config.delivery.wakeAllowNicks ?? []).some((g) =>
 			new RegExp(`^${g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*")}$`, "i").test(nick),
 		);
+
 		if (allowed) return true;
 		const tier = this.config.delivery.wakeTrust ?? "account";
+
 		if (tier === "none") return false;
 		const peer = this.roster.get(nick);
+
 		if (!peer?.account) return false;
+
 		if (tier === "account") return true;
+
 		return (
 			peer.kind === "agent" &&
 			peer.project === this.config.projectSlug &&
@@ -694,9 +784,7 @@ export class IrcSession extends EventEmitter {
 			connection: this.client.state,
 			wakeTrust: this.config.delivery.wakeTrust ?? "account",
 			channels: this.channels.list().map((ch) => ch.name),
-			...(this.#pendingReconnect()
-				? { reconnect: this.#pendingReconnect() }
-				: {}),
+			...(this.#pendingReconnect() ? { reconnect: this.#pendingReconnect() } : {}),
 			unread: this.buffer.unreadAll(),
 		};
 	}
@@ -713,7 +801,11 @@ export class IrcSession extends EventEmitter {
 			lastSeen: new Date(p.lastSeen).toISOString(),
 			self: p.self,
 		});
-		return this.roster.all().map(view).sort((a, b) => String(a.nick).localeCompare(String(b.nick)));
+
+		return this.roster
+			.all()
+			.map(view)
+			.sort((a, b) => String(a.nick).localeCompare(String(b.nick)));
 	}
 	/**
 	 * Resolve an addressing spec to a nick or channel:
@@ -728,29 +820,38 @@ export class IrcSession extends EventEmitter {
 		// Selectors are project-scoped: role words and @session ids only ever
 		// resolve inside OUR project — foreign agents on a shared server are
 		// addressed by their raw nick (visible via `irc roster`).
-		const agents = this.roster
-			.all()
-			.filter((p) => !p.self && p.session && p.project === this.config.projectSlug);
+		const agents = this.roster.all().filter((p) => !p.self && p.session && p.project === this.config.projectSlug);
+
 		const fail = (why: string, known: Peer[]) =>
 			new Error(`${why} (known agents: ${known.map((p) => `${p.nick} @${p.session}`).join(", ") || "none"})`);
+
 		if (spec.startsWith("@")) {
 			const frag = spec.slice(1).toLowerCase();
+
 			if (!frag) throw fail("empty @session selector", agents);
 			const hits = agents.filter((p) => p.session?.toLowerCase().startsWith(frag));
+
 			if (hits.length === 1) return hits[0].nick;
 			throw fail(
-				hits.length === 0 ? `no agent session starts with "${frag}"` : `session prefix "${frag}" is ambiguous (${hits.length} agents)`,
+				hits.length === 0
+					? `no agent session starts with "${frag}"`
+					: `session prefix "${frag}" is ambiguous (${hits.length} agents)`,
 				hits.length > 0 ? hits : agents,
 			);
 		}
+
 		if (spec === "main" || spec === "sub") {
 			const hits = agents.filter((p) => p.role === spec);
+
 			if (hits.length === 1) return hits[0].nick;
 			throw fail(
-				hits.length === 0 ? `no ${spec} agent in the roster` : `${hits.length} ${spec} agents — address by @session instead`,
+				hits.length === 0
+					? `no ${spec} agent in the roster`
+					: `${hits.length} ${spec} agents — address by @session instead`,
 				hits.length > 0 ? hits : agents,
 			);
 		}
+
 		return spec;
 	}
 
@@ -758,6 +859,7 @@ export class IrcSession extends EventEmitter {
 		const to = this.resolveTarget(target ?? this.projectChannel);
 		const chunks = this.delivery.enqueue(to, text);
 		this.delivery.drain();
+
 		return { target: to, chunks, pending: this.delivery.pending() };
 	}
 
@@ -766,17 +868,15 @@ export class IrcSession extends EventEmitter {
 	 * Resolves with the peer's answer, or a timeout result. The session keeps
 	 * serving while we wait: inbound traffic flows, asks from others buffer.
 	 */
-	async ask(
-		rawPeer: string,
-		question: string,
-		timeoutSec = DEFAULT_ASK_TIMEOUT_SEC,
-	): Promise<AskResolution> {
+	async ask(rawPeer: string, question: string, timeoutSec = DEFAULT_ASK_TIMEOUT_SEC): Promise<AskResolution> {
 		const peer = this.resolveTarget(rawPeer);
 		const timeoutMs = Math.min(3_600, Math.max(1, timeoutSec)) * 1_000;
 		const { id, done } = this.rpc.trackOutbound(peer, question, timeoutMs);
+
 		for (const part of envelopeParts("ask", id, question, this.delivery.maxChunk, timeoutSec)) {
 			this.delivery.enqueue(peer, part);
 		}
+
 		this.delivery.drain();
 		this.buffer.push({
 			conv: peer,
@@ -784,6 +884,7 @@ export class IrcSession extends EventEmitter {
 			text: `asked ${peer} (id=${id}): ${question}`,
 			kind: "system",
 		});
+
 		return done;
 	}
 
@@ -793,15 +894,19 @@ export class IrcSession extends EventEmitter {
 	 */
 	reply(id: string, text: string): { id: string; to: string; parts: number } {
 		const pending = this.rpc.pendingInbound().find((a) => a.id === id);
+
 		if (!pending) {
 			const open = this.rpc
 				.pendingInbound()
 				.map((a) => `${a.id} from ${a.peer}`)
 				.join(", ");
+
 			throw new Error(`unknown or already-answered ask id=${id}. Pending: ${open || "(none)"}`);
 		}
+
 		this.rpc.resolveInbound(id, text);
 		const parts = envelopeParts("reply", id, text, this.delivery.maxChunk);
+
 		for (const part of parts) this.delivery.enqueue(pending.peer, part);
 		this.delivery.drain();
 		this.buffer.push({
@@ -810,6 +915,7 @@ export class IrcSession extends EventEmitter {
 			text: `replied to ${pending.peer} (ask id=${id}): ${text}`,
 			kind: "system",
 		});
+
 		return { id, to: pending.peer, parts: parts.length };
 	}
 
@@ -826,18 +932,22 @@ export class IrcSession extends EventEmitter {
 	#catchup(target: string, limit: number): Promise<IrcMessage[]> {
 		const run = async (): Promise<IrcMessage[]> => {
 			const hasCap = this.client.enabledCaps.some((c) => c.toLowerCase().includes("chathistory"));
+
 			if (limit <= 0 || !hasCap) return [];
+
 			try {
 				return await this.client.chathistory(target, limit);
 			} catch {
 				return []; // history is best-effort by design
 			}
 		};
+
 		const p = this.#catchupTail.then(run, run);
 		this.#catchupTail = p.then(
 			() => undefined,
 			() => undefined,
 		);
+
 		return p;
 	}
 
@@ -849,11 +959,13 @@ export class IrcSession extends EventEmitter {
 	async fetchHistory(target: string, limit?: number): Promise<BufferedMessage[]> {
 		const n = limit ?? (this.#historyLimit || 50);
 		await this.#catchup(target, n);
+
 		return this.read({ conv: target, limit: Math.max(n, 1) });
 	}
 
 	join(names: string[]): void {
 		const fresh = names.filter((n) => !this.channels.joined(n));
+
 		if (fresh.length === 0) return;
 		this.client.join(fresh);
 	}
@@ -873,22 +985,28 @@ export class IrcSession extends EventEmitter {
 		this.#cancelScheduled = null;
 		this.#cancelKickRejoin?.();
 		this.#cancelKickRejoin = null;
+
 		if (this.#whoTimer) {
 			clearTimeout(this.#whoTimer);
 			this.#whoTimer = null;
 		}
+
 		this.#whoPending.clear();
+
 		if (this.#rosterSweep) {
 			clearInterval(this.#rosterSweep);
 			this.#rosterSweep = null;
 		}
+
 		this.rpc.dispose();
 		this.delivery.stop();
+
 		try {
 			this.client.quit(reason);
 		} catch {
 			// already gone
 		}
+
 		this.emit("stopped");
 	}
 }
@@ -896,9 +1014,7 @@ export class IrcSession extends EventEmitter {
 // ---- helpers -------------------------------------------------------------
 
 function renderStamp(template: string, slug: string, now: number): string {
-	return template
-		.replaceAll("{slug}", slug)
-		.replaceAll("{date}", new Date(now).toISOString().slice(0, 10));
+	return template.replaceAll("{slug}", slug).replaceAll("{date}", new Date(now).toISOString().slice(0, 10));
 }
 
 /**
@@ -918,20 +1034,24 @@ function onceOrThrow<T>(
 			cleanup();
 			reject(new Error(`${what}: timed out after ${timeoutMs}ms`));
 		}, timeoutMs);
+
 		const onWanted = (e: T) => {
 			if (satisfy && !satisfy(e)) return;
 			cleanup();
 			resolve(e);
 		};
+
 		const onError = (e: { message?: string }) => {
 			cleanup();
 			reject(new Error(`${what}: ${e.message ?? "failed"}`));
 		};
+
 		function cleanup() {
 			clearTimeout(timer);
 			emitter.off(event, onWanted);
 			emitter.off(errorEvent, onError);
 		}
+
 		emitter.on(event, onWanted);
 		emitter.on(errorEvent, onError);
 	});

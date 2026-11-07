@@ -26,9 +26,11 @@ export class MockIrcServer extends net.Server {
 		socket.on("data", (chunk) => {
 			buffer += chunk;
 			let nl;
+
 			while ((nl = buffer.indexOf("\n")) !== -1) {
 				const line = buffer.slice(0, nl).replace(/\r$/, "");
 				buffer = buffer.slice(nl + 1);
+
 				if (line.length === 0) continue;
 				client.lines.push(line);
 				this.#handle(client, line);
@@ -45,36 +47,48 @@ export class MockIrcServer extends net.Server {
 		const [cmd, ...params] = line.split(" ");
 		const ti = line.indexOf(" :");
 		const trailing = ti === -1 ? null : line.slice(ti + 2);
+
 		switch (cmd.toUpperCase()) {
 			case "NICK": {
 				const nick = params[0];
+
 				if (this.rejectFirstNick && !this.rejectedOnce.has(client)) {
 					this.rejectedOnce.add(client);
 					this.#send(client, `:mock 433 * ${nick} :Nickname is already in use`);
+
 					return;
 				}
+
 				client.nick = nick;
+
 				if (client.user) this.#welcome(client); // registration completes
 				break;
 			}
+
 			case "CAP": {
 				client.sawCap = true;
 				const sub = (params[0] ?? "").toUpperCase();
+
 				if (sub === "LS") {
 					this.#send(client, `:mock CAP * LS :${this.caps.join(" ")}`);
 				} else if (sub === "REQ") {
 					const list = (trailing ?? params.slice(1).join(" ")).split(" ").filter(Boolean);
 					const ok = list.every((c) => this.caps.includes(c));
 					this.#send(client, `:mock CAP * ${ok ? "ACK" : "NAK"} :${list.join(" ")}`);
+
 					if (ok) (client.caps ??= []).push(...list);
 				} else if (sub === "END") {
 					client.capEnded = true;
+
 					if (client.nick && client.user) this.#welcome(client);
 				}
+
 				break;
 			}
+
 			case "USER":
 				client.user = trailing ?? "user";
+
 				if (client.nick) this.#welcome(client);
 				break;
 			case "JOIN": {
@@ -83,13 +97,16 @@ export class MockIrcServer extends net.Server {
 					this.#send(client, `:mock 353 ${client.nick} = ${chan} :${client.nick} peer`);
 					this.#send(client, `:mock 366 ${client.nick} ${chan} :End of /NAMES list`);
 				}
+
 				break;
 			}
+
 			case "TOPIC": {
 				// Query form (no second param): answer like ergo — 331, no topic.
 				if (params.length === 1) this.#send(client, `:mock 331 ${client.nick} ${params[0]} :No topic is set`);
 				break;
 			}
+
 			case "PING":
 				this.#send(client, `:mock PONG mock ${params[0] ?? ""}`.trimEnd());
 				break;
@@ -102,14 +119,17 @@ export class MockIrcServer extends net.Server {
 				this.#send(client, `:mock 315 ${client.nick} ${mask} :End of /WHO list`);
 				break;
 			}
+
 			default:
 				break;
 		}
+
 		this.onLine?.(client, line);
 	}
 
 	#welcome(client) {
 		if (client.welcomed) return;
+
 		// IRCv3: with CAP negotiation in flight, 001 waits for CAP END.
 		if (client.sawCap && !client.capEnded) return;
 		client.welcomed = true;
@@ -130,6 +150,7 @@ export class MockIrcServer extends net.Server {
 
 	async stop() {
 		for (const c of this.clients) c.socket.destroy();
+
 		return new Promise((resolve) => this.close(() => resolve()));
 	}
 

@@ -6,6 +6,7 @@ import { createJiti } from "jiti";
 import { MockIrcServer } from "./mock-irc-server.mjs";
 
 const jiti = createJiti(import.meta.url);
+
 const { IrcSession } = await jiti.import("../lib/session.ts");
 
 function cfg(port, nick) {
@@ -20,7 +21,12 @@ function cfg(port, nick) {
 }
 
 async function boot(srv, nick, shortId) {
-	const s = await IrcSession.connect(cfg(srv.address?.().port ?? port, nick), { project: "proj", role: "main", shortId });
+	const s = await IrcSession.connect(cfg(srv.address?.().port ?? port, nick), {
+		project: "proj",
+		role: "main",
+		shortId,
+	});
+
 	return s;
 }
 
@@ -31,6 +37,7 @@ function route(srv) {
 	srv.on("privmsg", ({ client, target, text }) => {
 		if (target.startsWith("#")) return;
 		const idx = srv.clients.findIndex((c) => c.nick === target);
+
 		if (idx >= 0 && idx !== srv.clients.indexOf(client))
 			srv.push(`:${client.nick}!pi@mock PRIVMSG ${target} :${text}`, idx);
 	});
@@ -42,6 +49,7 @@ test("ask/reply: full round-trip between two sessions", async () => {
 	route(srv);
 	const alice = await boot(srv, "pi-alice", "a1");
 	const bob = await boot(srv, "pi-bob", "b2");
+
 	try {
 		const wakes = [];
 		bob.on("wake", (w) => wakes.push(w));
@@ -89,6 +97,7 @@ test("ask/reply: timeout on silent peer, late reply surfaces as DM", async () =>
 	route(srv);
 	const alice = await boot(srv, "pi-alice", "a1");
 	const bob = await boot(srv, "pi-bob", "b2");
+
 	try {
 		const t0 = Date.now();
 		const res = await alice.ask("pi-bob", "anyone?", 1);
@@ -119,11 +128,17 @@ test("ask/reply: multi-part reply reassembles exactly", async () => {
 	route(srv);
 	const alice = await boot(srv, "pi-alice", "a1");
 	const bob = await boot(srv, "pi-bob", "b2");
+
 	try {
 		const body = Array.from({ length: 120 }, (_, i) => `word${i}`).join(" ");
 		const answer = alice.ask("pi-bob", "list 120 words", 20);
 		await new Promise((r) => setTimeout(r, 80));
-		const id = bob.read({ limit: 5 }).find((m) => m.kind === "ask").text.match(/id=([0-9a-z]+)/)[1];
+
+		const id = bob
+			.read({ limit: 5 })
+			.find((m) => m.kind === "ask")
+			.text.match(/id=([0-9a-z]+)/)[1];
+
 		const sent = bob.reply(id, body);
 		assert.ok(sent.parts > 1, "split into parts");
 		const res = await answer;

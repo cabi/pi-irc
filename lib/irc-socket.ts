@@ -30,6 +30,7 @@ export class IrcSocket extends EventEmitter {
 		return new Promise((resolve, reject) => {
 			const timeoutMs = opts.timeoutMs ?? 15000;
 			let settled = false;
+
 			const timer = setTimeout(() => {
 				if (settled) return;
 				settled = true;
@@ -37,6 +38,7 @@ export class IrcSocket extends EventEmitter {
 				this.socket = null;
 				reject(new Error(`connect timeout after ${timeoutMs}ms`));
 			}, timeoutMs);
+
 			const onError = (err: Error) => {
 				if (settled) return;
 				settled = true;
@@ -45,6 +47,7 @@ export class IrcSocket extends EventEmitter {
 				this.socket = null;
 				reject(err);
 			};
+
 			const onConnect = () => {
 				if (settled) return;
 				settled = true;
@@ -65,6 +68,7 @@ export class IrcSocket extends EventEmitter {
 				sock.on("close", () => {
 					const hadSocket = this.socket !== null;
 					this.socket = null;
+
 					if (hadSocket && !this.closing) this.emit("unexpected-close");
 					this.emit("close");
 				});
@@ -75,6 +79,7 @@ export class IrcSocket extends EventEmitter {
 				host: opts.host,
 				port: opts.port,
 			};
+
 			if (opts.tls) {
 				this.socket = tls.connect({
 					...common,
@@ -85,6 +90,7 @@ export class IrcSocket extends EventEmitter {
 			} else {
 				this.socket = net.connect(common);
 			}
+
 			// TCP completes on 'connect', TLS only after the handshake
 			// ('secureConnect') — resolving TLS on raw 'connect' would wire
 			// data handlers before decrypted bytes exist.
@@ -96,13 +102,16 @@ export class IrcSocket extends EventEmitter {
 	#onData(chunk: string): void {
 		this.buffer += chunk;
 		let nl: number;
+
 		while ((nl = this.buffer.search(/\r\n|\n/)) !== -1) {
 			// Separator at nl is \r\n or a bare \n (tolerated: some servers/proxies).
 			const sepLen = this.buffer.startsWith("\r\n", nl) ? 2 : 1;
 			const line = this.buffer.slice(0, nl);
 			this.buffer = this.buffer.slice(nl + sepLen);
+
 			if (line.length > 0) this.emit("line", line);
 		}
+
 		if (this.buffer.length > 4096) {
 			// Runaway line without terminator: drop it, stay framed.
 			this.emit("error", new Error("line exceeds 4096 bytes without terminator"));
@@ -114,6 +123,7 @@ export class IrcSocket extends EventEmitter {
 		if (!this.socket || this.socket.destroyed) {
 			throw new Error("send on closed socket");
 		}
+
 		this.socket.write(`${line}\r\n`);
 	}
 

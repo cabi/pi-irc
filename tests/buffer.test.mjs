@@ -53,17 +53,29 @@ test("filtered read never skips non-matching unread below returned ones", () => 
 	// from-filter returns 1 and 3 — bob's 2 sits between them and must
 	// stay unread, not be silently skipped by a cursor jump to 3.
 	const got = buf.read({ from: "alice" });
-	assert.deepEqual(got.map((m) => m.text), ["1", "3"]);
+	assert.deepEqual(
+		got.map((m) => m.text),
+		["1", "3"],
+	);
 	assert.equal(buf.unread("#a"), 1, "bob's message is still unread");
-	assert.deepEqual(buf.read().map((m) => m.text), ["2"]);
+	assert.deepEqual(
+		buf.read().map((m) => m.text),
+		["2"],
+	);
 
 	// same hazard via since= filter
 	buf.push({ conv: "#a", display: "#a", from: "carol", text: "4", ts: 400 });
 	buf.push({ conv: "#a", display: "#a", from: "alice", text: "5", ts: 500 });
 	const later = buf.read({ since: 450 });
-	assert.deepEqual(later.map((m) => m.text), ["5"]);
+	assert.deepEqual(
+		later.map((m) => m.text),
+		["5"],
+	);
 	assert.equal(buf.unread("#a"), 1, "carol's below-threshold message stays unread");
-	assert.deepEqual(buf.read().map((m) => m.text), ["4"]);
+	assert.deepEqual(
+		buf.read().map((m) => m.text),
+		["4"],
+	);
 });
 
 test("read drains unread, respects filters, advances cursor", () => {
@@ -74,13 +86,19 @@ test("read drains unread, respects filters, advances cursor", () => {
 	assert.deepEqual(buf.unreadAll(), { "#a": 2, "#b": 1 });
 
 	const fromAlice = buf.read({ from: "ALICE" });
-	assert.deepEqual(fromAlice.map((m) => m.text), ["1", "3"]);
+	assert.deepEqual(
+		fromAlice.map((m) => m.text),
+		["1", "3"],
+	);
 	// cursor advanced past alice's messages only
 	assert.equal(buf.unread("#a"), 1);
 	assert.equal(buf.unread("#b"), 0);
 
 	const rest = buf.read();
-	assert.deepEqual(rest.map((m) => m.text), ["2"]);
+	assert.deepEqual(
+		rest.map((m) => m.text),
+		["2"],
+	);
 	assert.deepEqual(buf.unreadAll(), {});
 });
 
@@ -95,11 +113,16 @@ test("read with conv scope advances only that conversation", () => {
 
 test("ring buffer evicts oldest beyond maxPerConv", () => {
 	const buf = mkbuf(3);
+
 	for (let i = 1; i <= 5; i++) buf.push({ conv: "#a", display: "#a", from: "x", text: `m${i}` });
 	const hist = buf.history("#a");
-	assert.deepEqual(hist.map((m) => m.text), ["m3", "m4", "m5"]);
+	assert.deepEqual(
+		hist.map((m) => m.text),
+		["m3", "m4", "m5"],
+	);
 	// eviction never rewinds the cursor below what was read
 	buf.read();
+
 	for (let i = 6; i <= 9; i++) buf.push({ conv: "#a", display: "#a", from: "x", text: `m${i}` });
 	assert.equal(buf.unread("#a"), 3);
 });
@@ -108,14 +131,26 @@ test("since filter and limit are honored", () => {
 	const buf = mkbuf(10);
 	buf.push({ conv: "#a", display: "#a", from: "x", text: "old", ts: 100 });
 	buf.push({ conv: "#a", display: "#a", from: "x", text: "new", ts: 200 });
-	assert.deepEqual(buf.read({ since: 150 }).map((m) => m.text), ["new"]);
+	assert.deepEqual(
+		buf.read({ since: 150 }).map((m) => m.text),
+		["new"],
+	);
 	buf.push({ conv: "#a", display: "#a", from: "x", text: "n2", ts: 300 });
 	buf.push({ conv: "#a", display: "#a", from: "x", text: "n3", ts: 400 });
 	// "old" was below the since threshold and never delivered — it comes
 	// back first now instead of being silently skipped by the cursor.
-	assert.deepEqual(buf.read({ limit: 1 }).map((m) => m.text), ["old"]);
-	assert.deepEqual(buf.read({ limit: 1 }).map((m) => m.text), ["n2"]);
-	assert.deepEqual(buf.read({ limit: 1 }).map((m) => m.text), ["n3"]);
+	assert.deepEqual(
+		buf.read({ limit: 1 }).map((m) => m.text),
+		["old"],
+	);
+	assert.deepEqual(
+		buf.read({ limit: 1 }).map((m) => m.text),
+		["n2"],
+	);
+	assert.deepEqual(
+		buf.read({ limit: 1 }).map((m) => m.text),
+		["n3"],
+	);
 });
 
 test("mark flushes cursors without draining: all, one conv, unknown, no-op", () => {
@@ -143,21 +178,28 @@ test("mark flushes cursors without draining: all, one conv, unknown, no-op", () 
 
 test("P16: incremental unread counters never drift from brute force (fuzz)", () => {
 	const buf = new MessageBuffer(7, "pi-main-s1");
+
 	const brute = () => {
 		const out = {};
-		for (const [key, conv] of buf.convs) {
+
+		for (const [_key, conv] of buf.convs) {
 			const n = conv.messages.filter((m) => m.seq > conv.cursorSeq && !conv.delivered.has(m.seq)).length;
+
 			if (n > 0) out[conv.display] = n;
 		}
+
 		return out;
 	};
+
 	// Direct field access is the point: same object, two counting strategies.
 	const convs = ["#chan", "#other", "alice", "bob"];
 	let seed = 42;
-	const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+	const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+
 	for (let step = 0; step < 4_000; step++) {
 		const conv = convs[Math.floor(rnd() * convs.length)];
 		const roll = rnd();
+
 		if (roll < 0.55) {
 			buf.push({ conv, from: roll < 0.3 ? "alice" : "carol", text: `m${step}` });
 		} else if (roll < 0.8) {
@@ -172,6 +214,7 @@ test("P16: incremental unread counters never drift from brute force (fuzz)", () 
 		} else {
 			buf.history(conv);
 		}
+
 		assert.deepEqual(
 			Object.fromEntries(Object.entries(buf.unreadAll()).sort()),
 			Object.fromEntries(Object.entries(brute()).sort()),

@@ -8,6 +8,7 @@ import { EventEmitter } from "node:events";
 import { loadViaPi, repoFile } from "./helpers.mjs";
 
 const { IrcSession } = await loadViaPi(repoFile("lib", "session.ts"));
+
 const { IrcClient } = await loadViaPi(repoFile("lib", "irc-client.ts"));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -34,18 +35,25 @@ class FakeServer extends EventEmitter {
 	#flush() {
 		const pending = this.#answers;
 		this.#answers = [];
+
 		for (const a of pending) queueMicrotask(a);
 	}
 
 	#autoAnswer(line) {
 		if (!this.#client) return;
 		const m = /^(\S+)(?:\s+(.*))?$/.exec(line);
+
 		if (!m) return;
 		const [, cmd, rest = ""] = m;
 		const me = this.#client.nick;
+
 		switch (cmd) {
 			case "JOIN": {
-				const chans = rest.split(",").map((c) => c.trim()).filter(Boolean);
+				const chans = rest
+					.split(",")
+					.map((c) => c.trim())
+					.filter(Boolean);
+
 				for (const chan of chans) {
 					this.say(`:${me}!pi@h JOIN ${chan}`);
 					this.say(`:srv 331 ${me} ${chan} :No topic is set`);
@@ -55,17 +63,21 @@ class FakeServer extends EventEmitter {
 					this.say(`:srv 352 ${me} ${chan} u h srv chanop H :0 Carsten`);
 					this.say(`:srv 315 ${me} ${chan} :End of WHO list`);
 				}
+
 				break;
 			}
+
 			case "TOPIC": {
 				this.say(`:srv 331 ${me} ${rest} :No topic is set`);
 				break;
 			}
+
 			case "WHO": {
 				const mask = rest.split(" ")[0];
 				this.say(`:srv 315 ${me} ${mask} :End of WHO list`);
 				break;
 			}
+
 			default:
 				break;
 		}
@@ -110,6 +122,7 @@ async function boot(channelsOver = {}, srv = new FakeServer()) {
 	const pending = IrcSession.connect(makeConfig(channelsOver), ident, { client });
 	srv.say(":srv 376 pi-main-s1 :End of MOTD");
 	const session = await pending;
+
 	return { srv, client, session };
 }
 

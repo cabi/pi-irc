@@ -32,15 +32,20 @@ export class Backoff {
 			jitter: opts.jitter ?? 0.2,
 			rand: opts.rand ?? Math.random,
 		};
+
 		if (this.opts.baseMs <= 0) throw new Error("baseMs must be > 0");
+
 		if (this.opts.factor <= 1) throw new Error("factor must be > 1");
+
 		if (this.opts.maxMs < this.opts.baseMs) throw new Error("maxMs must be >= baseMs");
+
 		if (this.opts.jitter < 0 || this.opts.jitter > 1) throw new Error("jitter must be within [0,1]");
 	}
 
 	/** Consume and return the next delay (jittered). */
 	next(): number {
 		this.attempt += 1;
+
 		return this.#jittered(this.#raw(this.attempt));
 	}
 
@@ -55,8 +60,10 @@ export class Backoff {
 
 	#jittered(delay: number): number {
 		const { jitter, rand } = this.opts;
+
 		if (jitter === 0) return delay;
 		const spread = delay * jitter;
+
 		return Math.round(delay - spread + rand() * 2 * spread);
 	}
 

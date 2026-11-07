@@ -3,9 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { loadViaPi, repoFile } from "./helpers.mjs";
 
-const { parseLine, formatLine, wire, maxPrivmsgBytes, WireError } = await loadViaPi(
-	repoFile("lib", "wire.ts"),
-);
+const { parseLine, formatLine, wire, maxPrivmsgBytes, WireError } = await loadViaPi(repoFile("lib", "wire.ts"));
 
 test("parses a full privmsg with nick!user@host prefix", () => {
 	const m = parseLine(":carsten!~c@localhost PRIVMSG #pi-demo :hello agents :)");
@@ -47,7 +45,7 @@ test("ircv3 tags: parsed, unescaped, and carried on the message", () => {
 	assert.equal(m.tags?.time, "2024-01-01T00:00:00Z");
 	// IRCv3 tag value escaping: \: = ";", \s = space, unknown drops the backslash.
 	const e = parseLine("@msg=a\\:b\\sc\\\\d\\xe :n PRIVMSG #c :t");
-	assert.equal(e.tags?.msg, 'a;b c\\dxe');
+	assert.equal(e.tags?.msg, "a;b c\\dxe");
 	// Bare tag (no =) reads as empty string.
 	const b = parseLine("@draft :n PRIVMSG #c :t");
 	assert.equal(b.tags?.draft, "");
@@ -77,8 +75,14 @@ test("wire builders emit exact protocol lines", () => {
 });
 
 test("formatLine rejects CR, LF, and NUL anywhere (command injection guard)", () => {
-	assert.throws(() => formatLine({ command: "PRIVMSG", params: ["#chan"], trailing: "hi\r\nQUIT :pwned" }), /CR, LF, or NUL/);
-	assert.throws(() => formatLine({ command: "PRIVMSG", params: ["#chan\r\nJOIN #evil"], trailing: "x" }), /CR, LF, or NUL/);
+	assert.throws(
+		() => formatLine({ command: "PRIVMSG", params: ["#chan"], trailing: "hi\r\nQUIT :pwned" }),
+		/CR, LF, or NUL/,
+	);
+	assert.throws(
+		() => formatLine({ command: "PRIVMSG", params: ["#chan\r\nJOIN #evil"], trailing: "x" }),
+		/CR, LF, or NUL/,
+	);
 	assert.throws(() => formatLine({ command: "NICK", params: ["a\0b"] }), /CR, LF, or NUL/);
 	assert.throws(() => formatLine({ command: "NI\rCK" }), /CR, LF, or NUL/);
 	// clean input still formats
@@ -90,6 +94,7 @@ test("wire.join validates channel names before formatting", () => {
 	assert.throws(() => wire.join(["#a,b"]), /invalid channel/i);
 	assert.equal(wire.join(["#lounge"]), "JOIN #lounge");
 });
+
 test("maxPrivmsgBytes budget is positive and consistent", () => {
 	const budget = maxPrivmsgBytes("#pi-demo", "pi-demo-m01a");
 	assert.equal(budget > 400 && budget <= 475, true);

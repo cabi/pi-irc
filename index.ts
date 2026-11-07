@@ -16,6 +16,7 @@ import type { IdentityContext } from "./lib/identity.ts";
 import { IrcSession } from "./lib/session.ts";
 import { IRC_SUBCOMMANDS, runIrcCommand } from "./lib/commands.ts";
 import { executeIrcOp, IRC_OPS, type IrcToolParams } from "./lib/tool.ts";
+
 /** Where the admin keeps the global config (PRODUCT.md "Configuration"). */
 function globalConfigPath(): string {
 	return path.join(os.homedir(), ".pi", "agent", "pi-irc.json");
@@ -28,6 +29,7 @@ function globalConfigPath(): string {
  */
 function identityFrom(cwd: string, sessionId: string): IdentityContext {
 	const role = process.env.PI_IRC_ROLE === "sub" ? "sub" : "main";
+
 	return {
 		project: path.basename(path.resolve(cwd)),
 		role,
@@ -43,11 +45,13 @@ export default function (pi: ExtensionAPI) {
 		projectPath: path.join(process.cwd(), ".pi", "pi-irc.json"),
 		projectDir: process.cwd(),
 	});
+
 	if (!config) {
 		// Absent config = deliberately disabled; stay silent but visible.
 		pi.on("session_start", (_event, ctx) => {
 			ctx.ui.notify("pi-irc: no ~/.pi/agent/pi-irc.json — extension disabled", "info");
 		});
+
 		return;
 	}
 
@@ -55,13 +59,16 @@ export default function (pi: ExtensionAPI) {
 	let session: IrcSession | null = null;
 	let lastSessionId = "";
 	let notify: (message: string, type?: "info" | "warning" | "error") => void = () => {};
+
 	/** Busy presence mirrors the host agent's run state (AWAY while mid-run). */
 	let busy = false;
 
 	/** Lazily (re)bootstrap the IRC session; rejects loudly on hard failure. */
 	const ensureSession = (ctx: { cwd: string; sessionManager: { getSessionId(): string } }): Promise<IrcSession> => {
 		const sid = ctx.sessionManager.getSessionId();
+
 		if (session && sid === lastSessionId) return Promise.resolve(session);
+
 		if (booting && sid === lastSessionId) return booting;
 		lastSessionId = sid;
 		booting = IrcSession.connect(config, identityFrom(ctx.cwd, sid))
@@ -75,19 +82,23 @@ export default function (pi: ExtensionAPI) {
 						{ deliverAs: "steer" },
 					);
 				});
+
 				if (busy) s.setBusy(true); // boot while mid-run: arrive already away
+
 				return s;
 			})
 			.catch((err: unknown) => {
 				booting = null; // next tool call retries
 				throw err;
 			});
+
 		return booting;
 	};
 
 	pi.on("session_start", (event, ctx) => {
 		notify = ctx.ui.notify.bind(ctx.ui);
 		const sid = ctx.sessionManager.getSessionId();
+
 		// `reload` re-fires session_start for the same session: keep the
 		// live connection instead of reconnecting.
 		if (event.reason === "reload" && session && sid === lastSessionId) return;
@@ -103,6 +114,7 @@ export default function (pi: ExtensionAPI) {
 		getArgumentCompletions: (prefix: string) => {
 			const items = IRC_SUBCOMMANDS.map((s) => ({ value: s, label: s }));
 			const hits = items.filter((i) => i.value.startsWith(prefix));
+
 			return hits.length > 0 ? hits : null;
 		},
 		handler: async (
@@ -159,22 +171,20 @@ export default function (pi: ExtensionAPI) {
 						"from the server. join/part: extra channels. help: usage.",
 				}),
 				target: Type.Optional(
-					Type.String({ description: "send: channel or nick (default = project channel); history: the channel or nick to fetch" }),
+					Type.String({
+						description: "send: channel or nick (default = project channel); history: the channel or nick to fetch",
+					}),
 				),
 				text: Type.Optional(Type.String({ description: "send: message text" })),
 				conversation: Type.Optional(
 					Type.String({ description: "read: only this channel or nick; mark: flush only this conversation" }),
 				),
 				from: Type.Optional(Type.String({ description: "read: only messages from this nick" })),
-				since: Type.Optional(
-					Type.Number({ description: "read: only messages at/after this unix timestamp" }),
-				),
+				since: Type.Optional(Type.Number({ description: "read: only messages at/after this unix timestamp" })),
 				limit: Type.Optional(
 					Type.Number({ description: "read: max messages (default 200); history: max lines to fetch (default 50)" }),
 				),
-				channels: Type.Optional(
-					Type.Array(Type.String(), { description: "join/part: channel names" }),
-				),
+				channels: Type.Optional(Type.Array(Type.String(), { description: "join/part: channel names" })),
 				peer: Type.Optional(Type.String({ description: "ask: peer nick to ask (question in `text`)" })),
 				timeout: Type.Optional(
 					Type.Number({ description: "ask: seconds to wait for the reply (default 600, max 3600)" }),
@@ -182,11 +192,8 @@ export default function (pi: ExtensionAPI) {
 				id: Type.Optional(Type.String({ description: "reply: the ask id to answer (answer in `text`)" })),
 			}),
 			async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-				const r = await executeIrcOp(
-					() => ensureSession(ctx),
-					String(params.op ?? ""),
-					params as IrcToolParams,
-				);
+				const r = await executeIrcOp(() => ensureSession(ctx), String(params.op ?? ""), params as IrcToolParams);
+
 				return { content: r.content, details: r.details };
 			},
 		}),

@@ -20,10 +20,7 @@ import { EventEmitter } from "node:events";
  */
 test("connect to a dead server rejects cleanly instead of crashing", async () => {
 	const transport = new IrcSocket();
-	const client = new IrcClient(
-		{ nick: "crashtest", username: "crashtest", realname: "crashtest" },
-		transport,
-	);
+	const client = new IrcClient({ nick: "crashtest", username: "crashtest", realname: "crashtest" }, transport);
 	// No 'error' listener is attached on purpose: none exists in the real
 	// startup window either (session binds its listener only after connect).
 	await assert.rejects(
@@ -44,6 +41,7 @@ test("transport errors surface as real Error instances, not plain objects", asyn
 			return Promise.resolve();
 		}
 	}
+
 	const transport = new FakeTransport();
 	const client = new IrcClient({ nick: "errtest", username: "errtest", realname: "errtest" }, transport);
 	const seen = new Promise((resolve) => client.once("error", resolve));

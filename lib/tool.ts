@@ -25,6 +25,7 @@ export const IRC_OPS = [
 	"part",
 	"help",
 ] as const;
+
 export type IrcOp = (typeof IRC_OPS)[number];
 
 export interface IrcToolParams {
@@ -88,25 +89,37 @@ export async function executeIrcOp(
 
 		case "status": {
 			const st = session.status() as Record<string, unknown>;
+
 			const lines = Object.entries(st).map(([k, v]) => {
 				const value = typeof v === "object" && v !== null ? JSON.stringify(v) : String(v);
+
 				return `${k}: ${value}`;
 			});
+
 			return text(lines.join("\n") || "no state", st);
 		}
 
 		case "roster": {
 			const peers = session.rosterView();
+
 			if (peers.length === 0) return text("nobody here yet");
+
 			const lines = peers.map((p) => {
 				const bits: string[] = [String(p.nick), p.kind === "agent" ? "agent" : "human"];
+
 				if (p.role) bits.push(String(p.role));
-			if (p.away) bits.push("busy");
+
+				if (p.away) bits.push("busy");
+
 				if (p.project) bits.push(`project=${p.project}`);
+
 				if (p.session) bits.push(`session=${p.session}`);
+
 				if (p.self) bits.push("(me)");
+
 				return bits.join(" ");
 			});
+
 			return text(lines.join("\n"), { peers: peers.length });
 		}
 
@@ -114,10 +127,12 @@ export async function executeIrcOp(
 			if (!params.text || params.text.trim().length === 0) {
 				throw new Error("send requires text");
 			}
+
 			const r = session.send(params.target, params.text);
 			const where = r.target === session.projectChannel ? `${r.target} (project channel)` : r.target;
 			const tail = r.chunks > 1 ? ` (split into ${r.chunks} chunks)` : "";
 			const queued = r.pending > 0 ? ` [${r.pending} queued behind flood limit]` : "";
+
 			return text(`sent to ${where}${tail}${queued}`, r as unknown as Record<string, unknown>);
 		}
 
@@ -128,33 +143,48 @@ export async function executeIrcOp(
 				since: params.since,
 				limit: params.limit,
 			});
+
 			if (msgs.length === 0) return text("nothing unread", { count: 0 });
+
 			const lines = msgs.map((m) => {
 				const chan = m.channel.startsWith("#") || m.channel.startsWith("&");
 				const tag = chan ? "" : m.kind === "ask" ? " (ask) " : m.kind === "reply" ? " (reply) " : " (dm) ";
+
 				return `${fmtTime(m.ts)}${tag}${m.channel} <${m.from}> ${m.text}`;
 			});
+
 			return text(lines.join("\n"), { count: msgs.length });
 		}
+
 		case "mark": {
 			const flushed = session.mark(params.conversation);
 			const names = Object.keys(flushed);
+
 			if (names.length === 0) return text("nothing unread to mark", { flushed });
 			const total = Object.values(flushed).reduce((a, b) => a + b, 0);
 			const where = params.conversation ? params.conversation : "all conversations";
+
 			return text(`marked ${where} read (${total} message${total === 1 ? "" : "s"}: ${names.join(", ")})`, { flushed });
 		}
+
 		case "ask": {
 			if (!params.peer || !params.text?.trim()) {
 				throw new Error("ask requires peer and text (the question)");
 			}
+
 			const res = await session.ask(params.peer, params.text, params.timeout);
+
 			if (res.status === "replied") {
 				return text(`${params.peer} replied: ${res.reply}`, res as unknown as Record<string, unknown>);
 			}
+
 			if (res.status === "disposed") {
-				return text(`ask aborted — session stopped before ${params.peer} answered`, res as unknown as Record<string, unknown>);
+				return text(
+					`ask aborted — session stopped before ${params.peer} answered`,
+					res as unknown as Record<string, unknown>,
+				);
 			}
+
 			return text(
 				`no answer from ${params.peer} within ${Math.round(res.timeoutMs / 1000)}s — the ask is still visible to them; retry or send directly`,
 				res as unknown as Record<string, unknown>,
@@ -164,12 +194,16 @@ export async function executeIrcOp(
 		case "reply": {
 			if (!params.id || !params.text?.trim()) {
 				const open = session.rpc.pendingInbound();
+
 				const listed = open.length
 					? `open asks:\n${open.map((a) => `  id=${a.id} from ${a.peer}: ${a.question}`).join("\n")}`
 					: "no open asks";
+
 				throw new Error(`reply requires id and text. ${listed}`);
 			}
+
 			const r = session.reply(params.id, params.text);
+
 			return text(`replied to ${r.to} (ask id=${r.id})`, r as unknown as Record<string, unknown>);
 		}
 
@@ -187,43 +221,59 @@ export async function executeIrcOp(
 					? `asks you sent (${out.length}):\n${out.map((a) => `  id=${a.id} to ${a.peer}: ${a.question}`).join("\n")}`
 					: "no asks you are waiting on",
 			);
+
 			return text(lines.join("\n"), { inbound: inb.length, outbound: out.length });
 		}
+
 		case "history": {
 			const target = params.target?.trim();
+
 			if (!target) throw new Error("history requires target (channel or nick)");
 			const msgs = await session.fetchHistory(target, params.limit);
+
 			if (msgs.length === 0) {
 				return text(`no stored history for ${target} (server without chathistory, or nothing recorded)`, {
 					target,
 					count: 0,
 				});
 			}
+
 			const lines = msgs.map((m) => `${fmtTime(m.ts)} ${m.channel} <${m.from}> ${m.text}`);
+
 			return text(lines.join("\n"), { target, count: msgs.length });
 		}
+
 		case "join": {
 			const names = (params.channels ?? []).map((c) => c.trim()).filter(Boolean);
+
 			if (names.length === 0) throw new Error("join requires channels: string[]");
 			session.join(names);
+
 			return text(`joining ${names.join(", ")} (members arrive in the background)`, { requested: names });
 		}
 
 		case "part": {
 			const names = (params.channels ?? []).map((c) => c.trim()).filter(Boolean);
+
 			if (names.length === 0) throw new Error("part requires channels: string[]");
 			const project = session.projectChannel.toLowerCase();
 			const allowed = names.filter((c) => c.toLowerCase() !== project);
+
 			if (allowed.length === 0) {
 				throw new Error("the project channel cannot be parted");
 			}
+
 			session.part(allowed);
 			const skipped = names.filter((c) => c.toLowerCase() === project);
-			return text(`parting ${allowed.join(", ")}${skipped.length ? ` (kept ${skipped.join(", ")})` : ""}`, { parted: allowed });
+
+			return text(`parting ${allowed.join(", ")}${skipped.length ? ` (kept ${skipped.join(", ")})` : ""}`, {
+				parted: allowed,
+			});
 		}
 
 		case "help": {
 			const st = session.status() as { nick?: string; projectChannel?: string };
+
 			return text(
 				[
 					`irc — you are ${st.nick} on ${st.projectChannel}`,
@@ -234,12 +284,12 @@ export async function executeIrcOp(
 					"  roster — who is on the project channel (agents and humans)",
 					"  send — text [+ optional target channel/nick]; default: project channel",
 					"  read — unread messages [conversation=..., from=..., since=..., limit=N]",
-				"  ask — peer + text: correlated question; blocks until their reply or timeout",
-				"  reply — id + text: answer an ask (ids shown in read/pending output)",
-				"  pending — asks waiting on you and asks you are waiting on",
-				"  pending — asks waiting on you and asks you are waiting on",
-				"  history — target + limit: fetch stored channel/DM history (chathistory)",
-				"  join / part — channels: string[] (project channel cannot be parted)",
+					"  ask — peer + text: correlated question; blocks until their reply or timeout",
+					"  reply — id + text: answer an ask (ids shown in read/pending output)",
+					"  pending — asks waiting on you and asks you are waiting on",
+					"  pending — asks waiting on you and asks you are waiting on",
+					"  history — target + limit: fetch stored channel/DM history (chathistory)",
+					"  join / part — channels: string[] (project channel cannot be parted)",
 					"",
 					"humans and other agents see your messages as normal IRC traffic;",
 					"check `read` after tool work — DMs to you are buffered until read.",
@@ -247,5 +297,6 @@ export async function executeIrcOp(
 			);
 		}
 	}
+
 	throw new Error(`unhandled op "${op}"`);
 }

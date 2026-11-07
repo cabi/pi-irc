@@ -34,6 +34,7 @@ class FakeTransport extends EventEmitter {
 
 function makeClient(overrides = {}) {
 	const t = new FakeTransport();
+
 	const c = new IrcClient(
 		{
 			nick: "pi-demo-m01",
@@ -44,6 +45,7 @@ function makeClient(overrides = {}) {
 		},
 		t,
 	);
+
 	return { c, t };
 }
 
@@ -51,10 +53,7 @@ test("registration sends NICK+USER, 001 completes it", () => {
 	const { c, t } = makeClient();
 	c.startRegistration();
 	assert.equal(c.state, "registering");
-	assert.deepEqual(t.sent.slice(0, 2), [
-		"NICK pi-demo-m01",
-		"USER pi 0 * :pi-agent project=demo role=main",
-	]);
+	assert.deepEqual(t.sent.slice(0, 2), ["NICK pi-demo-m01", "USER pi 0 * :pi-agent project=demo role=main"]);
 	t.server(":srv 001 pi-demo-m01 :Welcome");
 	assert.equal(c.state, "registered");
 	assert.equal(c.realNick, "pi-demo-m01");
@@ -65,10 +64,7 @@ test("433 nick collision retries through the fallback pool", () => {
 	c.startRegistration();
 	t.server(":srv 433 * pi-demo-m01 :Nickname is already in use");
 	t.server(":srv 433 * pi-demo-m01-a :Nickname is already in use");
-	assert.deepEqual(
-		t.sentLines("NICK").slice(1),
-		["NICK pi-demo-m01-a", "NICK pi-demo-m01-b"],
-	);
+	assert.deepEqual(t.sentLines("NICK").slice(1), ["NICK pi-demo-m01-a", "NICK pi-demo-m01-b"]);
 	t.server(":srv 001 pi-demo-m01-b :Welcome");
 	assert.equal(c.realNick, "pi-demo-m01-b");
 });

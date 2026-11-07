@@ -10,16 +10,19 @@
  *
  *   IRC_PORT=6667 node scripts/presence-smoke.mjs
  */
-import assert from "node:assert/strict";
 import net from "node:net";
 import { loadViaPi, repoFile } from "../tests/helpers.mjs";
 
 const { IrcSession } = await loadViaPi(repoFile("lib", "session.ts"));
 
 const HOST = "127.0.0.1";
+
 const PORT = Number(process.env.IRC_PORT ?? 6667);
+
 const stamp = Date.now().toString(36).slice(-4);
+
 const MAIN = `pi-main-p${stamp}`;
+
 const SUB = `pi-sub-q${stamp}`;
 
 const cfg = {
@@ -51,20 +54,26 @@ function rawClient(nick) {
 	sock.on("data", (d) => {
 		buf += d;
 		let i;
+
 		while ((i = buf.indexOf("\r\n")) >= 0) {
 			const line = buf.slice(0, i);
 			buf = buf.slice(i + 2);
+
 			if (!line) continue;
 			lines.push(line);
+
 			for (const w of [...waiters]) w(line);
 		}
 	});
 	const send = (l) => sock.write(`${l}\r\n`);
+
 	const next = (pred, ms = 8000) =>
 		new Promise((res, rej) => {
 			const hit = lines.find(pred);
+
 			if (hit) return res(hit);
 			const t = setTimeout(() => rej(new Error(`timeout waiting for line; got:\n${lines.slice(-12).join("\n")}`)), ms);
+
 			const waiter = (l) => {
 				if (pred(l)) {
 					clearTimeout(t);
@@ -72,8 +81,10 @@ function rawClient(nick) {
 					res(l);
 				}
 			};
+
 			waiters.push(waiter);
 		});
+
 	return {
 		nick,
 		lines,
@@ -85,10 +96,12 @@ function rawClient(nick) {
 			send(`NICK ${nick}`);
 			send(`USER pi 0 * :human probe`);
 			const ls = await next((l) => / CAP .* LS /.test(l) || / 421 /.test(l));
+
 			if (/ CAP .* LS /.test(ls) && /away-notify/.test(ls)) {
 				send(`CAP REQ :away-notify`);
 				await next((l) => / CAP .* ACK /.test(l));
 			}
+
 			send(`CAP END`);
 			await next((l) => / 001 /.test(l));
 		},
@@ -97,12 +110,14 @@ function rawClient(nick) {
 }
 
 const results = [];
+
 const check = (name, ok, extra = "") => {
 	results.push([name, ok]);
 	console.log(`${ok ? "PASS" : "FAIL"}  ${name}${extra ? ` — ${extra}` : ""}`);
 };
 
 let exit = 0;
+
 try {
 	console.log(`# presence/wake-trust smoke against ${HOST}:${PORT}`);
 	const main = await IrcSession.connect(cfg, { project: "presence", role: "main", shortId: `p${stamp}` });
@@ -139,13 +154,19 @@ try {
 	// 3. Busy: AWAY goes out, peer roster sees it, server 301s DMs.
 	main.setBusy(true);
 	const awayLine = await stranger.next((l) => new RegExp(`^:${MAIN}[^ ]* AWAY`).test(l), 5000).catch(() => null);
-	check("AWAY broadcast seen by a watcher (away-notify)", Boolean(awayLine), awayLine ?? "no away-notify — falling back to WHO");
+	check(
+		"AWAY broadcast seen by a watcher (away-notify)",
+		Boolean(awayLine),
+		awayLine ?? "no away-notify — falling back to WHO",
+	);
+
 	if (!awayLine) {
 		// Fallback: WHO the main nick and read the H/G flag.
 		stranger.send(`WHO ${MAIN}`);
 		const who = await stranger.next((l) => / 352 /.test(l));
 		check("WHO shows gone flag while busy", / G[^\n]*$/.test(who), who);
 	}
+
 	await new Promise((r) => setTimeout(r, 1000));
 	const peer = sub.rosterView().find((p) => p.nick === MAIN);
 	check("peer roster marks main busy", peer?.away === true, JSON.stringify(peer ?? {}));
@@ -169,6 +190,7 @@ try {
 	console.error(err);
 } finally {
 	const fails = results.filter(([, ok]) => !ok);
+
 	if (fails.length) exit = 1;
 	console.log(`\n${results.length - fails.length}/${results.length} checks passed`);
 	process.exit(exit);

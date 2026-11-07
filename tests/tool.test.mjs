@@ -24,28 +24,29 @@ function fakeSession(over = {}) {
 		}),
 		send: (target, text) => {
 			state.sent.push([target ?? "#pi-proj", text]);
+
 			return { target: target ?? "#pi-proj", text, chunks: 1, pending: 0 };
 		},
 		read: (o) => {
 			state.readCalls.push(o);
+
 			return [
 				{ ts: 1_700_000_060_000, channel: "#pi-proj", from: "alice", text: "hi", kind: "channel" },
 				{ ts: 1_700_000_120_000, channel: "carol", from: "carol", text: "dm!", kind: "dm" },
 			].filter(
-				(m) =>
-					(!o.conv || m.channel === o.conv) &&
-					(!o.from || m.from === o.from) &&
-					(!o.since || m.ts >= o.since),
+				(m) => (!o.conv || m.channel === o.conv) && (!o.from || m.from === o.from) && (!o.since || m.ts >= o.since),
 			);
 		},
 		join: (names) => state.joined.push(...names),
 		part: (names) => state.parted.push(...names),
 		...over,
 	};
+
 	state.sent = [];
 	state.readCalls = [];
 	state.joined = [];
 	state.parted = [];
+
 	return state;
 }
 
@@ -61,6 +62,7 @@ test("unknown op throws with the legal ops listed", async () => {
 test("help names the session and every op", async () => {
 	const r = await executeIrcOp(ensureOf(fakeSession()), "help", {});
 	assert.match(r.content[0].text, /irc — you are pi-main-abcd1234 on #pi-proj/);
+
 	for (const op of ["connect", "status", "roster", "send", "read", "join", "part"]) {
 		assert.ok(r.content[0].text.includes(op), `help mentions ${op}`);
 	}
@@ -87,10 +89,7 @@ test("send defaults to the project channel", async () => {
 });
 
 test("send without text fails fast", async () => {
-	await assert.rejects(
-		() => executeIrcOp(ensureOf(fakeSession()), "send", { text: "   " }),
-		/send requires text/,
-	);
+	await assert.rejects(() => executeIrcOp(ensureOf(fakeSession()), "send", { text: "   " }), /send requires text/);
 });
 
 test("read formats channel lines and DM lines differently", async () => {
@@ -122,10 +121,7 @@ test("join forwards channel names", async () => {
 });
 
 test("join without channels fails", async () => {
-	await assert.rejects(
-		() => executeIrcOp(ensureOf(fakeSession()), "join", {}),
-		/join requires channels/,
-	);
+	await assert.rejects(() => executeIrcOp(ensureOf(fakeSession()), "join", {}), /join requires channels/);
 });
 
 test("part refuses to drop the project channel but parts the rest", async () => {
@@ -146,62 +142,75 @@ test("connect reports nick, project channel, and channel count", async () => {
 	const r = await executeIrcOp(ensureOf(fakeSession()), "connect", {});
 	assert.match(r.content[0].text, /connected as pi-main-abcd1234 in #pi-proj \(1 channels\)/);
 
-test("ask requires peer and text", async () => {
-	await assert.rejects(
-		() => executeIrcOp(ensureOf(fakeSession()), "ask", { text: "hi?" }),
-		/ask requires peer and text/,
-	);
-});
-
-test("ask renders a replied resolution", async () => {
-	const s = fakeSession({
-		ask: async (_peer, question) => ({ status: "replied", id: "x1", peer: "pi-sub-b2", reply: `re: ${question}`, elapsedMs: 5 }),
+	test("ask requires peer and text", async () => {
+		await assert.rejects(
+			() => executeIrcOp(ensureOf(fakeSession()), "ask", { text: "hi?" }),
+			/ask requires peer and text/,
+		);
 	});
-	const r = await executeIrcOp(ensureOf(s), "ask", { peer: "pi-sub-b2", text: "which branch?" });
-	assert.match(r.content[0].text, /pi-sub-b2 replied: re: which branch\?/);
-});
 
-test("ask renders a timeout with guidance", async () => {
-	const s = fakeSession({
-		ask: async () => ({ status: "timeout", id: "x2", peer: "carol", question: "there?", timeoutMs: 5_000 }),
-	});
-	const r = await executeIrcOp(ensureOf(s), "ask", { peer: "carol", text: "there?", timeout: 5 });
-	assert.match(r.content[0].text, /no answer from carol within 5s/);
-	assert.match(r.content[0].text, /still visible/);
-});
+	test("ask renders a replied resolution", async () => {
+		const s = fakeSession({
+			ask: async (_peer, question) => ({
+				status: "replied",
+				id: "x1",
+				peer: "pi-sub-b2",
+				reply: `re: ${question}`,
+				elapsedMs: 5,
+			}),
+		});
 
-test("reply without id lists open asks", async () => {
-	const s = fakeSession({
-		rpc: {
-			pendingInbound: () => [{ id: "a1", peer: "carol", question: "deploy?", receivedAt: 1 }],
-			pendingOutbound: () => [],
-		},
+		const r = await executeIrcOp(ensureOf(s), "ask", { peer: "pi-sub-b2", text: "which branch?" });
+		assert.match(r.content[0].text, /pi-sub-b2 replied: re: which branch\?/);
 	});
-	await assert.rejects(
-		() => executeIrcOp(ensureOf(s), "reply", { text: "yes" }),
-		/reply requires id and text[\s\S]*id=a1 from carol: deploy\?/,
-	);
-});
 
-test("reply forwards id and text to the session", async () => {
-	const s = fakeSession({
-		reply: (id, text) => ({ id, to: "carol", parts: 1, text }),
-	});
-	const r = await executeIrcOp(ensureOf(s), "reply", { id: "a1", text: "ship it" });
-	assert.match(r.content[0].text, /replied to carol \(ask id=a1\)/);
-});
+	test("ask renders a timeout with guidance", async () => {
+		const s = fakeSession({
+			ask: async () => ({ status: "timeout", id: "x2", peer: "carol", question: "there?", timeoutMs: 5_000 }),
+		});
 
-test("pending lists both directions", async () => {
-	const s = fakeSession({
-		rpc: {
-			pendingInbound: () => [{ id: "a1", peer: "carol", question: "deploy?", receivedAt: 1 }],
-			pendingOutbound: () => [{ id: "x9", peer: "pi-sub-b2", question: "branch?", sentAt: 1, timeoutMs: 1000, state: "waiting" }],
-		},
+		const r = await executeIrcOp(ensureOf(s), "ask", { peer: "carol", text: "there?", timeout: 5 });
+		assert.match(r.content[0].text, /no answer from carol within 5s/);
+		assert.match(r.content[0].text, /still visible/);
 	});
-	const r = await executeIrcOp(ensureOf(s), "pending", {});
-	assert.match(r.content[0].text, /asks to answer \(1\):[\s\S]*id=a1 from carol: deploy\?/);
-	assert.match(r.content[0].text, /asks you sent \(1\):[\s\S]*id=x9 to pi-sub-b2: branch\?/);
-});
+
+	test("reply without id lists open asks", async () => {
+		const s = fakeSession({
+			rpc: {
+				pendingInbound: () => [{ id: "a1", peer: "carol", question: "deploy?", receivedAt: 1 }],
+				pendingOutbound: () => [],
+			},
+		});
+
+		await assert.rejects(
+			() => executeIrcOp(ensureOf(s), "reply", { text: "yes" }),
+			/reply requires id and text[\s\S]*id=a1 from carol: deploy\?/,
+		);
+	});
+
+	test("reply forwards id and text to the session", async () => {
+		const s = fakeSession({
+			reply: (id, text) => ({ id, to: "carol", parts: 1, text }),
+		});
+
+		const r = await executeIrcOp(ensureOf(s), "reply", { id: "a1", text: "ship it" });
+		assert.match(r.content[0].text, /replied to carol \(ask id=a1\)/);
+	});
+
+	test("pending lists both directions", async () => {
+		const s = fakeSession({
+			rpc: {
+				pendingInbound: () => [{ id: "a1", peer: "carol", question: "deploy?", receivedAt: 1 }],
+				pendingOutbound: () => [
+					{ id: "x9", peer: "pi-sub-b2", question: "branch?", sentAt: 1, timeoutMs: 1000, state: "waiting" },
+				],
+			},
+		});
+
+		const r = await executeIrcOp(ensureOf(s), "pending", {});
+		assert.match(r.content[0].text, /asks to answer \(1\):[\s\S]*id=a1 from carol: deploy\?/);
+		assert.match(r.content[0].text, /asks you sent \(1\):[\s\S]*id=x9 to pi-sub-b2: branch\?/);
+	});
 });
 
 test("mark flushes cursors and reports counts; empty stays quiet", async () => {

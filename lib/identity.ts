@@ -20,10 +20,11 @@ export interface IdentityContext {
 }
 
 /** Characters RFC 2812 allows inside a nickname (letter/digit/special). */
-const NICK_LEGAL = /[A-Za-z0-9\-\[\]\\`^{}|_]/g;
+const NICK_LEGAL = /[A-Za-z0-9\-[\]\\`^{}|_]/g;
 
 export function sanitizeNickPart(raw: string): string {
 	const kept = (raw.match(NICK_LEGAL) ?? []).join("");
+
 	return kept.toLowerCase();
 }
 
@@ -38,17 +39,22 @@ export function renderNick(template: string, ctx: IdentityContext, maxLen = 30):
 		.replaceAll("{role}", ctx.role)
 		.replaceAll("{shortId}", sanitizeNickPart(ctx.shortId))
 		.replaceAll("{parent}", sanitizeNickPart(ctx.parentId ?? ""));
+
 	out = out.replace(/\{[^}]*\}/g, ""); // drop unknown placeholders
-	out = out.replace(/[^A-Za-z0-9\-\[\]\\`^{}|_]/g, "");
+	out = out.replace(/[^A-Za-z0-9\-[\]\\`^{}|_]/g, "");
 	out = out.replace(/^[^A-Za-z]+/, ""); // nick must start with a letter
-	if (out.length > maxLen) out = out.slice(0, maxLen).replace(/[^A-Za-z0-9\-\[\]\\`^{}|_]+$/, "");
+
+	if (out.length > maxLen) out = out.slice(0, maxLen).replace(/[^A-Za-z0-9\-[\]\\`^{}|_]+$/, "");
+
 	if (out.length === 0) out = "pi";
+
 	return out;
 }
 
 export function nickFallbacks(maxLen = 30, count = 8): string[] {
 	return Array.from({ length: count }, (_, i) => {
 		const suffix = `-${i + 1}`;
+
 		// The client appends the suffix to the base nick; clamp so the
 		// result can never exceed maxLen.
 		return suffix.slice(0, Math.max(1, maxLen - 1));
@@ -57,13 +63,10 @@ export function nickFallbacks(maxLen = 30, count = 8): string[] {
 
 /** Encode the structured realname other pi-irc agents discover us by. */
 export function encodeRealname(ctx: IdentityContext): string {
-	const parts = [
-		"pi-agent",
-		`project=${ctx.project}`,
-		`role=${ctx.role}`,
-		`session=${ctx.shortId}`,
-	];
+	const parts = ["pi-agent", `project=${ctx.project}`, `role=${ctx.role}`, `session=${ctx.shortId}`];
+
 	if (ctx.parentId) parts.push(`parent=${ctx.parentId}`);
+
 	return parts.join(" ");
 }
 

@@ -49,9 +49,9 @@ Minimal global config (see `docs/example.pi-irc.json` for all keys):
 
 ```jsonc
 {
-  "server": { "host": "irc.example.net", "port": 6697, "tls": true },
-  "nick": { "template": "pi-{shortId}" },
-  "channels": { "projectTemplate": "#pi-{slug}", "autoCreate": true }
+	"server": { "host": "irc.example.net", "port": 6697, "tls": true },
+	"nick": { "template": "pi-{shortId}" },
+	"channels": { "projectTemplate": "#pi-{slug}", "autoCreate": true },
 }
 ```
 
@@ -63,8 +63,8 @@ Authenticated networks (SASL PLAIN over TLS — Libera-class servers):
 
 ```jsonc
 {
-  "server": { "host": "irc.example.net", "port": 6697, "tls": true },
-  "auth": { "username": "pi-agent", "passwordEnv": "PI_IRC_SASL_PASSWORD" }
+	"server": { "host": "irc.example.net", "port": 6697, "tls": true },
+	"auth": { "username": "pi-agent", "passwordEnv": "PI_IRC_SASL_PASSWORD" },
 }
 ```
 
@@ -76,22 +76,22 @@ Authenticated networks (SASL PLAIN over TLS — Libera-class servers):
 
 One tool, thirteen ops (discovery via `irc` with `op: "help"`):
 
-| Op | Does |
-|---|---|
-| `connect` | ensure connection + registration + joins (idempotent; usually already done) |
-| `status` | nick & role, project channel, joined channels, unread counts |
-| `roster` | channel members as agent (project, main/sub, session) or human; `away: true` = busy mid-run |
-| `send` | message the project channel (default) or any channel/nick — targets accept `@session-id` prefixes and role selectors (`main`, `sub`) |
-| `read` | unread messages since cursor (`from`/`since`/`channel` filters) |
-| `mark` | flush read cursors without fetching ("seen it") — one conversation or all |
-| `history` | replay recent messages for a channel or DM peer (`draft/chathistory`; `limit`, default `history.catchupLimit`) |
-| `join` / `part` | extra channels; the project channel cannot be parted |
-| `ask` | blocking question to another agent over DM (`[pi-ask <id>]` envelope, `timeout` seconds); accepts the same addressing selectors as `send` |
-| `reply` | answer an ask by `id` (`[pi-reply <id>]` envelope) |
-| `pending` | open asks in both directions |
-| `help` | op reference with current context |
+| Op              | Does                                                                                                                                      |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `connect`       | ensure connection + registration + joins (idempotent; usually already done)                                                               |
+| `status`        | nick & role, project channel, joined channels, unread counts                                                                              |
+| `roster`        | channel members as agent (project, main/sub, session) or human; `away: true` = busy mid-run                                               |
+| `send`          | message the project channel (default) or any channel/nick — targets accept `@session-id` prefixes and role selectors (`main`, `sub`)      |
+| `read`          | unread messages since cursor (`from`/`since`/`channel` filters)                                                                           |
+| `mark`          | flush read cursors without fetching ("seen it") — one conversation or all                                                                 |
+| `history`       | replay recent messages for a channel or DM peer (`draft/chathistory`; `limit`, default `history.catchupLimit`)                            |
+| `join` / `part` | extra channels; the project channel cannot be parted                                                                                      |
+| `ask`           | blocking question to another agent over DM (`[pi-ask <id>]` envelope, `timeout` seconds); accepts the same addressing selectors as `send` |
+| `reply`         | answer an ask by `id` (`[pi-reply <id>]` envelope)                                                                                        |
+| `pending`       | open asks in both directions                                                                                                              |
+| `help`          | op reference with current context                                                                                                         |
 
-By the time the agent may speak, it is connected, registered, and joined — with roster and buffers pre-prepared. **Addressing**: `send`/`ask` targets resolve before leaving the session — `@<session-id-prefix>` picks one agent by its session id (`@b1f2` → `pi-sub-b1f2…`), the bare words `main`/`sub` pick the *sole* agent in that role (ambiguity fails with the candidate list), and anything else passes through as a raw nick or channel. Resolution uses live roster metadata, so it survives renames and reconnects. Direct messages wake an idle session (throttled); channel chatter never does. While the agent is mid-run it marks itself `AWAY :busy since hh:mm` and returns when settled, so the roster's busy flag is live. Wake trust is **default-deny and tiered** (`delivery.wakeTrust`, shown by `status`): `account` (default) — any peer holding a services account (extended-join — the one IRC identity that costs a password to forge) wakes the session; `project` — additionally requires agent metadata, our project slug, and current membership in the project channel; `none` — allowlist only. `delivery.wakeAllowNicks` globs (e.g. `["carsten", "pi-*"]`) apply in every tier; self-declared agent metadata alone never wakes in any tier. Everyone else's DMs still buffer verbatim with one system line naming the tier that blocked them. On a server without NickServ/SASL, add your agents' and humans' nick globs to `wakeAllowNicks` or set `wakeTrust: "none"`. The link self-heals: reconnect with backoff rejoins every channel, and a kick from a channel re-joins after `channels.kickRejoinDelayMs` (default 3 s, `0` stays out) with one system line in the buffer so the agent sees why.
+By the time the agent may speak, it is connected, registered, and joined — with roster and buffers pre-prepared. **Addressing**: `send`/`ask` targets resolve before leaving the session — `@<session-id-prefix>` picks one agent by its session id (`@b1f2` → `pi-sub-b1f2…`), the bare words `main`/`sub` pick the _sole_ agent in that role (ambiguity fails with the candidate list), and anything else passes through as a raw nick or channel. Resolution uses live roster metadata, so it survives renames and reconnects. Direct messages wake an idle session (throttled); channel chatter never does. While the agent is mid-run it marks itself `AWAY :busy since hh:mm` and returns when settled, so the roster's busy flag is live. Wake trust is **default-deny and tiered** (`delivery.wakeTrust`, shown by `status`): `account` (default) — any peer holding a services account (extended-join — the one IRC identity that costs a password to forge) wakes the session; `project` — additionally requires agent metadata, our project slug, and current membership in the project channel; `none` — allowlist only. `delivery.wakeAllowNicks` globs (e.g. `["carsten", "pi-*"]`) apply in every tier; self-declared agent metadata alone never wakes in any tier. Everyone else's DMs still buffer verbatim with one system line naming the tier that blocked them. On a server without NickServ/SASL, add your agents' and humans' nick globs to `wakeAllowNicks` or set `wakeTrust: "none"`. The link self-heals: reconnect with backoff rejoins every channel, and a kick from a channel re-joins after `channels.kickRejoinDelayMs` (default 3 s, `0` stays out) with one system line in the buffer so the agent sees why.
 
 ## Two buses: pi-intercom vs pi-irc
 
@@ -116,7 +116,7 @@ Agents catch up automatically: on joining the project channel the session asks t
 
 Server-side durability is the server's call, not the extension's:
 
-- **ergo**: history exists while the channel is occupied; an *unregistered* channel is deleted (with its history) when the last member leaves. For durable project history, register once: `/msg ChanServ REGISTER #pi-<project>` (the first joining agent is the channel founder). Note that some ergo builds stamp no `msgid` on replayed lines — an explicit `history` call right after boot catch-up can then repeat a few lines; the dedup is best-effort by design.
+- **ergo**: history exists while the channel is occupied; an _unregistered_ channel is deleted (with its history) when the last member leaves. For durable project history, register once: `/msg ChanServ REGISTER #pi-<project>` (the first joining agent is the channel founder). Note that some ergo builds stamp no `msgid` on replayed lines — an explicit `history` call right after boot catch-up can then repeat a few lines; the dedup is best-effort by design.
 - **no chathistory cap** (plain RFC 2812 servers): the ops degrade to "live traffic only" — `history` returns an empty page with a note.
 
 ## Develop
