@@ -51,7 +51,7 @@ Minimal global config — one world, no `defaultServer` needed on single-world m
 ```jsonc
 {
 	"servers": { "home": { "host": "irc.example.net", "port": 6697, "tls": true } },
-	"nick": { "template": "pi-{shortId}" },
+	"nick": { "template": "pi-{project}", "subTemplate": "pi-{project}-sub" }, // defaults shown
 	"channels": { "projectTemplate": "#pi-{slug}", "autoCreate": true },
 }
 ```
@@ -101,6 +101,8 @@ One tool, thirteen ops (discovery via `irc` with `op: "help"`):
 | `help`          | op reference with current context                                                                                                         |
 
 By the time the agent may speak, it is connected, registered, and joined — with roster and buffers pre-prepared. **Addressing**: `send`/`ask` targets resolve before leaving the session — `@<session-id-prefix>` picks one agent by its session id (`@b1f2` → `pi-sub-b1f2…`), the bare words `main`/`sub` pick the _sole_ agent in that role (ambiguity fails with the candidate list), and anything else passes through as a raw nick or channel. Resolution uses live roster metadata, so it survives renames and reconnects. Direct messages wake an idle session (throttled); channel chatter stays passive unless you opt a session into channel wakes (`delivery.wakeOnChannel` — see Humans below). While the agent is mid-run it marks itself `AWAY :busy since hh:mm` and returns when settled, so the roster's busy flag is live. Wake trust is **default-deny and tiered** (`delivery.wakeTrust`, shown by `status`): `account` (default) — any peer holding a services account (extended-join — the one IRC identity that costs a password to forge) wakes the session; `project` — additionally requires agent metadata, our project slug, and current membership in the project channel; `none` — allowlist only. `delivery.wakeAllowNicks` globs (e.g. `["carsten", "pi-*"]`) apply in every tier; self-declared agent metadata alone never wakes in any tier. Everyone else's DMs still buffer verbatim with one system line naming the tier that blocked them. On a server without NickServ/SASL, add your agents' and humans' nick globs to `wakeAllowNicks` or set `wakeTrust: "none"`. The link self-heals: reconnect with backoff rejoins every channel, and a kick from a channel re-joins after `channels.kickRejoinDelayMs` (default 3 s, `0` stays out) with one system line in the buffer so the agent sees why.
+
+**Nicks and roles.** By default a session registers as `pi-<project>` (main) or `pi-<project>-sub` (sub); templates and the 30-char cap are configurable via `nick.template` / `nick.subTemplate` / `nick.maxLen` (`{project}`, `{role}`, `{shortId}`, `{parent}` placeholders; collisions get a numeric suffix). Session noise — role, session id, parent — lives in the realname metadata, not the nick. Role detection is env-based: a spawner that sets `PI_IRC_ROLE=sub` (and optionally `PI_IRC_PARENT=<parent session id>`) gets sub identity; sessions without it register as main. pi's built-in subagent spawner does not set these vars yet, so orchestrators that control the child environment (drill scripts, pi-herdr, custom spawners) pass them explicitly — see `scripts/drill-agents.mjs`.
 
 ## Two buses: pi-intercom vs pi-irc
 

@@ -43,7 +43,10 @@ export interface AuthConfig {
 }
 
 export interface NickConfig {
+	/** Nick template for main-agent sessions. */
 	template: string;
+	/** Nick template for sub-agent sessions (PI_IRC_ROLE=sub). */
+	subTemplate: string;
 	maxLen: number;
 }
 
@@ -142,7 +145,7 @@ type Defaults = {
 
 const DEFAULTS: Defaults = {
 	server: { port: 6697, tls: true },
-	nick: { template: "pi-{role}-{shortId}", maxLen: 30 },
+	nick: { template: "pi-{project}", subTemplate: "pi-{project}-sub", maxLen: 30 },
 	channels: {
 		projectTemplate: "#pi-{slug}",
 		defaults: [],
@@ -656,6 +659,7 @@ export function loadConfig(opts: {
 		...(auth ? { auth } : {}),
 		nick: {
 			template: str("nick.template", nick.template ?? DEFAULTS.nick.template),
+			subTemplate: str("nick.subTemplate", nick.subTemplate ?? DEFAULTS.nick.subTemplate),
 			maxLen: int("nick.maxLen", nick.maxLen ?? DEFAULTS.nick.maxLen, 1, 50),
 		},
 		channels: {

@@ -28,7 +28,8 @@
 	// Machine-wide defaults; every section below may be overridden per
 	// project (except servers/auth — those are admin-owned, always).
 	"nick": {
-		"template": "pi-{shortId}",
+		"template": "pi-{project}",
+		"subTemplate": "pi-{project}-sub",
 		"maxLen": 30,
 	},
 	"channels": {
@@ -70,5 +71,5 @@
 // 	"slug": "my-project",          // optional explicit slug
 // 	"channels": { "defaults": ["#lounge"] },
 // 	"delivery": { "wakeOnChannel": { "channels": ["#lounge"], "capabilities": "frontend and CSS" } },
-// 	"nick": { "template": "reviewer-{shortId}" }
+// 	"nick": { "template": "reviewer", "subTemplate": "reviewer-sub" }
 // }

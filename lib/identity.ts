@@ -79,17 +79,20 @@ export interface RegisterIdentity {
 }
 
 export interface IdentityConfig {
+	/** Main-agent nick template. */
 	template: string;
+	/** Sub-agent nick template (`PI_IRC_ROLE=sub` sessions). */
+	subTemplate: string;
 	maxLen: number;
 }
 
 /** Compose the full registration identity from merged config + session context. */
 export function buildRegisterIdentity(
-	cfg: Pick<IdentityConfig, "template" | "maxLen">,
+	cfg: Pick<IdentityConfig, "template" | "subTemplate" | "maxLen">,
 	ctx: IdentityContext,
 ): RegisterIdentity {
 	return {
-		nick: renderNick(cfg.template, ctx, cfg.maxLen),
+		nick: renderNick(ctx.role === "sub" ? cfg.subTemplate : cfg.template, ctx, cfg.maxLen),
 		username: "pi",
 		realname: encodeRealname(ctx),
 		nickFallbacks: nickFallbacks(cfg.maxLen),

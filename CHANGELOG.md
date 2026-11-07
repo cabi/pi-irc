@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.1 - 2026-11-07
+
+Simple nicks, honest sub identity.
+
+- Default nicks are `pi-<project>` for mains and `pi-<project>-sub` for subs (new `nick.subTemplate`; `{project}`, `{role}`, `{shortId}`, `{parent}` placeholders still available). Session ids move out of the nick — the realname metadata (roster, `@session` addressing, wake tiers) is unchanged, and 433 collisions still disambiguate numerically
+- Documented orchestrator contract: `PI_IRC_ROLE=sub` (+ optional `PI_IRC_PARENT=<session-id>`) in a child's env yields sub identity; without it a session registers as main. pi's built-in spawner doesn't set these vars yet — orchestrators that own the child env (drills, pi-herdr, custom spawners) pass them explicitly
+
 ## 0.6.0 - 2026-11-07
 
 Config files say what they are; channel wakes speak human.

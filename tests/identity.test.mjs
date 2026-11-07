@@ -32,6 +32,22 @@ test("nickFallbacks are numeric and bounded by maxLen", () => {
 	assert.ok(tight.every((s) => s.length <= 1));
 });
 
+test("buildRegisterIdentity: main and sub sessions pick their template", () => {
+	const cfg = { template: "pi-{project}", subTemplate: "pi-{project}-sub", maxLen: 30 };
+	const main = id.buildRegisterIdentity(cfg, { project: "pi-irc", role: "main", shortId: "ab12cd34" });
+	assert.equal(main.nick, "pi-pi-irc");
+
+	const sub = id.buildRegisterIdentity(cfg, {
+		project: "pi-irc",
+		role: "sub",
+		shortId: "ff001122",
+		parentId: "ab12cd34",
+	});
+
+	assert.equal(sub.nick, "pi-pi-irc-sub");
+	assert.equal(sub.realname, "pi-agent project=pi-irc role=sub session=ff001122 parent=ab12cd34");
+});
+
 test("encodeRealname carries project, role, session; parent only for subs", () => {
 	const main = id.encodeRealname({ project: "demo", role: "main", shortId: "ab12cd34" });
 	assert.equal(main, "pi-agent project=demo role=main session=ab12cd34");

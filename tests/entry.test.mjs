@@ -113,7 +113,7 @@ test("enabled: boots against mock server, serves tool ops, wakes on DM, quits on
 		fire(pi, "session_start", { type: "session_start", reason: "startup" }, makeCtx("/tmp/proj"));
 		// …is awaited by the first tool call (pull, not block).
 		const res = await pi.tools[0].execute("t1", { op: "status" }, undefined, undefined, makeCtx("/tmp/proj"));
-		assert.match(res.content[0].text, /nick: pi-main-abcdef12/);
+		assert.match(res.content[0].text, /nick: pi-proj/);
 		assert.match(res.content[0].text, /projectChannel: #pi-proj/);
 		const client = srv.lastClient();
 		assert.ok(

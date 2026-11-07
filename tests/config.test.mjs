@@ -74,7 +74,8 @@ test("defaults land where files are silent", () => {
 	const dir = tmpDir();
 	const globalPath = writeConfig(dir, "global.json", { server: { host: "irc.example.net" } });
 	const cfg = loadConfig({ globalPath, projectDir: "/work/My_Project" });
-	assert.equal(cfg.nick.template, "pi-{role}-{shortId}");
+	assert.equal(cfg.nick.template, "pi-{project}");
+	assert.equal(cfg.nick.subTemplate, "pi-{project}-sub");
 	assert.equal(cfg.nick.maxLen, 30);
 	assert.equal(cfg.channels.projectTemplate, "#pi-{slug}");
 	assert.deepEqual(cfg.channels.defaults, []);
