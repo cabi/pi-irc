@@ -176,7 +176,9 @@ pi-irc/
 - **Smoke suite:** deterministic mock server covering registration, nick collision retry, first-join channel creation + topic stamp, roster mapping (main/sub/human), buffer cursors, DM wake throttling, reconnect-and-rejoin; plus a live ergo container test.
 - **Validation run (P3):** two pi sessions in one project coordinate a small task exclusively through IRC while a human with a stock IRC client joins mid-task and redirects the work. Findings engrave back as pinning checks.
 
-## Roadmap
+# pi-irc — IRC as the communication bus for pi agents and humans
+
+**Status:** v0.4.1 — P1–P16 shipped: RFC 2812 client (reconnect, IRCv3 caps, SASL PLAIN, TLS), session bootstrap, `irc` tool with ask/reply RPC, presence, CHATHISTORY catch-up; three-way reviewed (P14) and every register finding remediated; validated live against ergo and InspIRCd · **Repo:** `~/Projects/pi-extensions/pi-irc` · **Related:** `pi-intercom` (same-machine session messaging — pi-irc is the same need on an open protocol, with humans and remote machines in the loop)
 
 - **P0 (done)** product definition, glossary, ADRs (docs/decisions/)
 - **P1 (done)** core: config, wire/transport/client, session bootstrap, identity, channel bootstrap, roster, buffer, delivery — `irc` tool with all 8 ops; wake-on-DM and the flood limiter shipped here, ahead of plan; 97 tests
@@ -208,6 +210,12 @@ pi-irc/
   - **P1-f UTF-16 chunking (clean):** `maxChunk: 400` counts UTF-16 units, `formatLine` checks `.length` not bytes, `maxPrivmsgBytes` unused in production → CJK/emoji messages truncated/dropped by the 512-byte wire limit. Fix: byte-aware chunking via maxPrivmsgBytes + multibyte test.
   - **P1-g read-cursor skip (sec, confirmed):** filtered `read(from|since)` advances the cursor to the highest returned seq, permanently skipping non-matching unread messages below it. Fix: advance only past messages actually delivered.
   - **P2 queue:** identity anchoring on SASL account + 433 reclaim + project filter on role/session selectors (sec-HIGH); roster `expire()` never called in production + PART no forget + msgid `.clear()` at 8k → FIFO (perf); O(total-buffer) unread scans (perf); WHO-per-JOIN unthrottled (perf-HIGH/sec-LOW — cold when extended-join negotiated); docs/test drift (clean: PRODUCT/README vs v0.4.0 reality, nested tool.test.mjs subtests, `{short}` vs `{shortId}`, help boots a session); hot-path polish mostly NOT the bottleneck (measured 214k msgs/s inbound end-to-end).
+- **P16 (done)** P14 register P2 queue, closed out:
+  - **roster lifecycle (4c2e439):** PART forgets a peer only when they left every shared channel (`channels.memberAnywhere`); QUIT stays the hard signal; `roster.expire()` finally wired (hourly sweep, 24 h TTL, unref'd) as the ghost safety net; role/`@session` selectors are project-scoped — foreign agents on a shared server are addressed by raw nick only; foreign-join WHO lookups batch into one 500 ms flush (deduped per nick) so RFC 2812 servers no longer eat WHO-per-JOIN floods; msgid dedup ring-evicts the oldest entry at 8 000 instead of wiping the set.
+  - **unread counters (fbe24fc):** `status()` is O(conversations) — per-conversation pending counts maintained on push/read/mark instead of scanning every buffered message; a 4 000-step fuzz asserts the counter never drifts from brute force.
+  - **desiredNick (56c1c13):** a 433-fallback rename is now visible — `status()` carries `desiredNick` whenever the active nick carries a fallback suffix; identity stays anchored on realname `session=` metadata and the SASL account (the 433 retry pool itself existed since P1).
+  - Docs drift: README verified current for v0.4.1 keys (flood control, wake default-deny, `tlsCaFile`); misleading `{short}` templates in tests renamed to `{shortId}`; the tool.test.mjs nesting/help complaints were stale — the file is flat and fake-backed.
+  - Battery at close: unit 227/227 + tsc clean.
 
 ### P6 — Ask/Reply RPC, busy presence, wake trust
 

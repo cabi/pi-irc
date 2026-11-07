@@ -86,7 +86,7 @@ class FakeServer extends EventEmitter {
 function makeConfig(channelsOver = {}) {
 	return {
 		server: { host: "irc.example", port: 6667, tls: false },
-		nick: { template: "pi-{role}-{short}", maxLen: 30 },
+		nick: { template: "pi-{role}-{shortId}", maxLen: 30 },
 		channels: {
 			projectTemplate: "#pi-{slug}",
 			defaults: [],

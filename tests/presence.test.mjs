@@ -81,7 +81,7 @@ const ident = { project: "proj", role: "main", shortId: "s1" };
 function makeConfig(over = {}) {
 	return {
 		server: { host: "irc.example", port: 6667, tls: false },
-		nick: { template: "pi-{role}-{short}", maxLen: 30 },
+		nick: { template: "pi-{role}-{shortId}", maxLen: 30 },
 		channels: {
 			projectTemplate: "#pi-{slug}",
 			defaults: [],

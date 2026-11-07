@@ -68,7 +68,7 @@ async function boot() {
 	srv.say(":srv 001 pi-main-me1 :Welcome");
 	const cfg = {
 		server: { host: "irc.example", port: 6667, tls: false },
-		nick: { template: "pi-{role}-{short}", maxLen: 30 },
+		nick: { template: "pi-{role}-{shortId}", maxLen: 30 },
 		channels: { projectTemplate: "#pi-{slug}", defaults: [], autoCreate: true, topicTemplate: "pi {slug}" },
 		capabilities: { request: [] },
 		delivery: { bufferMax: 50, wakeOnDirectMessage: true, chunkLongSends: true },
