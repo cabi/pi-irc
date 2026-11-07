@@ -40,10 +40,10 @@ up edits to the checkout.
 
 ## Configure
 
-pi-irc ships disabled until a global config exists — one clear log line, no crash. Layered config, project over global:
+pi-irc ships disabled until a global config exists — one clear log line, no crash. Layered config with a trust boundary — the project file lives in the repo, so it only shapes participation:
 
-- `~/.pi/agent/pi-irc.json` — admin-owned: server, defaults
-- `<project>/.pi/pi-irc.json` — per-project overrides: slug, extra channels, server switch
+- `~/.pi/agent/pi-irc.json` — admin-owned: **server, auth, nick, delivery** (identity, transport, wake trust)
+- `<project>/.pi/pi-irc.json` — project-owned: **slug, channels, capabilities, history** (participation & catch-up). Settings for admin-owned sections here are ignored with a warning.
 
 Minimal global config (see `docs/example.pi-irc.json` for all keys):
 

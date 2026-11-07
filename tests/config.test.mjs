@@ -38,14 +38,13 @@ test("missing global config disables the extension (null)", () => {
 	assert.equal(loadConfig({ globalPath: path.join(dir, "pi-irc.json") }), null);
 });
 
-test("empty global object plus project server works", () => {
+test("project server override is ignored — the global file owns the identity", () => {
 	const dir = tmpDir();
 	const globalPath = writeConfig(dir, "global.json", {});
 	const projectPath = writeConfig(dir, "project/.pi/pi-irc.json", { server: { host: "irc.test" } });
-	const cfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "project") });
-	assert.equal(cfg.server.host, "irc.test");
-	assert.equal(cfg.server.port, 6697);
-	assert.equal(cfg.server.tls, true);
+	// No host from the (only trusted) global file → loud ConfigError, not a
+	// silent connection to a repo-chosen server.
+	expectConfigError(() => loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "project") }), "server.host");
 });
 
 test("defaults land where files are silent", () => {
@@ -63,7 +62,7 @@ test("defaults land where files are silent", () => {
 	assert.equal(cfg.projectSlug, "my-project");
 });
 
-test("project section overrides global; defaults arrays replace, not concat", () => {
+test("project section overrides global where allowed; defaults arrays replace, not concat", () => {
 	const dir = tmpDir();
 	const globalPath = writeConfig(dir, "global.json", {
 		server: { host: "irc.example.net", port: 6667 },
@@ -75,8 +74,64 @@ test("project section overrides global; defaults arrays replace, not concat", ()
 	});
 	const cfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "project") });
 	assert.equal(cfg.server.host, "irc.example.net");
-	assert.equal(cfg.server.port, 6697);
+	// server is global-only now: the project's port override is ignored.
+	assert.equal(cfg.server.port, 6667);
 	assert.deepEqual(cfg.channels.defaults, ["#pi-project-ops"]);
+});
+
+test("trust boundary: project file cannot set server, auth, nick, or delivery", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", {
+		server: { host: "irc.example.net", port: 6667, passwordEnv: "IRC_PASS", tlsInsecure: false },
+		auth: { username: "agent", passwordEnv: "IRC_PASS" },
+		nick: { template: "pi-{role}-{shortId}" },
+		delivery: { bufferMax: 100, wakeAllowNicks: ["admin"] },
+	});
+	const projectPath = writeConfig(dir, "project/.pi/pi-irc.json", {
+		server: { host: "evil.example", passwordEnv: "ATTACKER_VAR", tlsInsecure: true },
+		auth: { username: "evil", password: "stolen" },
+		nick: { template: "evil-{shortId}" },
+		delivery: { bufferMax: 1, wakeAllowNicks: ["*"] },
+	});
+	const cfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "project") });
+	assert.equal(cfg.server.host, "irc.example.net");
+	assert.equal(cfg.server.passwordEnv, "IRC_PASS");
+	assert.equal(cfg.server.tlsInsecure, false);
+	assert.equal(cfg.auth.username, "agent");
+	assert.equal(cfg.auth.passwordEnv, "IRC_PASS");
+	assert.equal(cfg.nick.template, "pi-{role}-{shortId}");
+	assert.equal(cfg.delivery.bufferMax, 100);
+	assert.deepEqual(cfg.delivery.wakeAllowNicks, ["admin"]);
+});
+
+test("global auth reaches the config (was silently dropped by the merge)", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", {
+		server: { host: "irc.example.net" },
+		auth: { username: "agent", passwordEnv: "IRC_PASS" },
+	});
+	const cfg = loadConfig({ globalPath, projectDir: dir });
+	assert.equal(cfg.auth?.username, "agent");
+	assert.equal(cfg.auth?.passwordEnv, "IRC_PASS");
+});
+
+test("project-local keys (channels, capabilities, history) still override", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", {
+		server: { host: "irc.example.net" },
+		channels: { defaults: ["#pi-lobby"] },
+		capabilities: { request: ["extended-join"] },
+		history: { catchupLimit: 50 },
+	});
+	const projectPath = writeConfig(dir, "project/.pi/pi-irc.json", {
+		channels: { defaults: ["#pi-project-ops"] },
+		capabilities: { request: ["extended-join", "server-time"] },
+		history: { catchupLimit: 5 },
+	});
+	const cfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "project") });
+	assert.deepEqual(cfg.channels.defaults, ["#pi-project-ops"]);
+	assert.deepEqual(cfg.capabilities.request, ["extended-join", "server-time"]);
+	assert.equal(cfg.history.catchupLimit, 5);
 });
 
 test("explicit project slug wins over directory name", () => {

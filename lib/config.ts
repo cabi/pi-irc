@@ -4,9 +4,12 @@
  * offending key. A missing global file disables the extension (one log line);
  * a missing project file is normal.
  *
- * Merge: defaults ← global ← project, shallow per section; arrays replace
- * (never concatenate — a project's `channels.defaults` is its answer, not an
- * amendment to the global lobby list).
+ * Trust boundary: the project file is only as trustworthy as its repo.
+ * `server`, `auth`, `nick`, and `delivery` (identity, transport, wake trust)
+ * are GLOBAL-ONLY — project settings there are ignored with a warning.
+ * Project files shape participation: `channels`, `capabilities`, `history`,
+ * `slug`. Merge order: defaults ← global ← project (allowed sections only),
+ * shallow per section; arrays replace (never concatenate — a project's
  */
 
 import * as fs from "node:fs";
@@ -285,6 +288,12 @@ export function loadConfig(opts: {
 	}
 
 	const slugOverride = [project.slug, global.slug].find((s) => s !== undefined);
+	// Trust boundary: a project file lives in the repo and is only as
+	// trustworthy as the repo. Identity, transport, and trust settings
+	// (server, nick, delivery, auth) come from the admin's global file
+	// alone; project files may only shape channel participation and
+	// catch-up (channels, capabilities, history, slug).
+	const PROJECT_ALLOWED = new Set(["channels", "capabilities", "history"]);
 	const merged: Json = {};
 	for (const section of ["server", "nick", "channels", "capabilities", "delivery", "history"] as const) {
 		const g = global[section];
@@ -295,7 +304,22 @@ export function loadConfig(opts: {
 		if (p !== undefined && (typeof p !== "object" || p === null || Array.isArray(p))) {
 			throw new ConfigError(section, "expected an object");
 		}
+		if (p !== undefined && !PROJECT_ALLOWED.has(section)) {
+			console.warn(`pi-irc: ignoring "${section}" in project config — admin-owned, set it in the global config`);
+			merged[section] = { ...(g as Json | undefined) };
+			continue;
+		}
 		merged[section] = { ...(g as Json | undefined), ...(p as Json | undefined) };
+	}
+	// auth was never part of the merge (a P14 finding): it is global-only.
+	if (global.auth !== undefined) {
+		if (typeof global.auth !== "object" || global.auth === null || Array.isArray(global.auth)) {
+			throw new ConfigError("auth", "expected an object");
+		}
+		merged.auth = global.auth as Json;
+	}
+	if (project.auth !== undefined) {
+		console.warn('pi-irc: ignoring "auth" in project config — admin-owned, set it in the global config');
 	}
 
 	const server = merged.server as Json;
@@ -310,7 +334,7 @@ export function loadConfig(opts: {
 			: DEFAULTS.history.catchupLimit;
 	const host = server.host !== undefined ? str(server, "server.host", server.host) : undefined;
 	if (host === undefined) {
-		throw new ConfigError("server.host", "required (set it in the global or project config)");
+		throw new ConfigError("server.host", "required and admin-owned (set it in the global config)");
 	}
 
 	const passwordEnv =
