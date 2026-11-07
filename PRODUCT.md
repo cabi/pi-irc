@@ -2,6 +2,14 @@
 
 **Status:** v0.4.2 — P1–P16 shipped: RFC 2812 client (reconnect, IRCv3 caps, SASL PLAIN, TLS), session bootstrap, `irc` tool with ask/reply RPC, presence, CHATHISTORY catch-up; three-way reviewed (P14) and every register finding remediated; validated live against ergo and InspIRCd · **Repo:** `~/Projects/pi-extensions/pi-irc` · **Related:** `pi-intercom` (same-machine session messaging — pi-irc is the same need on an open protocol, with humans and remote machines in the loop)
 
+## Division of labor with pi-intercom
+
+Two buses, two planes — pick by participant, not by preference:
+
+- **pi-intercom is the control plane** for same-machine orchestration: supervisor↔worker asks and reports between pi sessions on one host. Faster (host-injected steers), richer presence (model, context, pane), and its wakes always fire. When both sides are pi sessions on this machine, intercom is the default — field-verified: channel-neutral workers pick it 2/2.
+- **pi-irc is the gateway** for everyone else: humans with stock IRC clients, agents on other machines, non-pi participants, and the durable, server-side record of the conversation. When a human or a remote machine is in the loop, IRC is the only bus that reaches them.
+- Spawn prompts should say which is which: "report to your supervisor via intercom; watch `#pi-<project>` on IRC for human input." The ask/reply envelopes are deliberately congruent across both, so switching planes costs nothing but the tool name.
+
 ### v0.3.2 — `server.tlsCaFile`: pin internal CAs, keep verification
 
 Operators running self-signed ergo/InspIRCd instances faced a false choice: `--use-system-ca` launch flags (fragile — depends on how pi is started) or `tlsInsecure: true` (skips verification entirely). `server.tlsCaFile` points at a PEM file (the internal CA or the self-signed leaf itself; `~` expands) that replaces — not supplements — the trust store, keeping full chain **and** hostname verification. Read at connect time; unreadable file fails closed with the path in the error. Mutually exclusive with `tlsInsecure` at config load. Connect-argument assembly is deduplicated (`connectOptsFor` in session.ts:76) — initial connect and every reconnect pass identical TLS options. Validated: unit tests spin a real TLS listener with the fixture self-signed cert (rejected without the CA, verified with it via `serverName` since the fixture cert is a bare CN); live probe against the operator's ergo (`irc.lan:6697`, cert pinned to `~/.pi/agent/certs/irc.lan.pem`, SAN `DNS:irc.lan`) — registered, negotiated caps, joined, clean quit.
