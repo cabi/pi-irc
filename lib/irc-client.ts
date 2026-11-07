@@ -9,7 +9,7 @@
  * socket.
  */
 import { EventEmitter } from "node:events";
-import { parseLine, wire, type IrcMessage } from "./wire.ts";
+import { parseLine, formatLine, wire, type IrcMessage } from "./wire.ts";
 import { NUMERICS } from "./numerics.ts";
 import { CapNegotiator } from "./caps.ts";
 import { authChunks, saslPlainPayload } from "./sasl.ts";
@@ -236,7 +236,10 @@ export class IrcClient extends EventEmitter {
 			this.on("batchStart", onBatchStart);
 			this.on("batchEnd", onBatchEnd);
 			this.on("message", onMessage);
-			this.#transport.send(`CHATHISTORY LATEST ${target} * ${limit}`);
+			// Built through formatLine: its CR/LF/NUL guard closes the last
+			// raw-interpolation injection path (target comes from tool input).
+			const n = Math.max(1, Math.min(1000, Math.floor(limit)));
+			this.#transport.send(formatLine({ command: "CHATHISTORY", params: ["LATEST", target, "*", String(n)] }));
 		});
 	}
 	quit(reason: string): void {

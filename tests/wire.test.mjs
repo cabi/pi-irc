@@ -76,6 +76,20 @@ test("wire builders emit exact protocol lines", () => {
 	assert.equal(wire.quit("done"), "QUIT :done");
 });
 
+test("formatLine rejects CR, LF, and NUL anywhere (command injection guard)", () => {
+	assert.throws(() => formatLine({ command: "PRIVMSG", params: ["#chan"], trailing: "hi\r\nQUIT :pwned" }), /CR, LF, or NUL/);
+	assert.throws(() => formatLine({ command: "PRIVMSG", params: ["#chan\r\nJOIN #evil"], trailing: "x" }), /CR, LF, or NUL/);
+	assert.throws(() => formatLine({ command: "NICK", params: ["a\0b"] }), /CR, LF, or NUL/);
+	assert.throws(() => formatLine({ command: "NI\rCK" }), /CR, LF, or NUL/);
+	// clean input still formats
+	assert.equal(formatLine({ command: "PRIVMSG", params: ["#chan"], trailing: "clean" }), "PRIVMSG #chan :clean");
+});
+
+test("wire.join validates channel names before formatting", () => {
+	assert.throws(() => wire.join(["#a", "noinit"]), /invalid channel/i);
+	assert.throws(() => wire.join(["#a,b"]), /invalid channel/i);
+	assert.equal(wire.join(["#lounge"]), "JOIN #lounge");
+});
 test("maxPrivmsgBytes budget is positive and consistent", () => {
 	const budget = maxPrivmsgBytes("#pi-demo", "pi-demo-m01a");
 	assert.equal(budget > 400 && budget <= 475, true);

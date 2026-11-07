@@ -105,6 +105,12 @@ export interface OutgoingMessage {
 
 /** Format a command object into a protocol line (no CRLF). */
 export function formatLine({ command, params = [], trailing }: OutgoingMessage): string {
+	// Framing safety: a CR, LF, or NUL anywhere would split or corrupt the
+	// command on the wire (injection). Reject at the single choke point.
+	const bad = /[\r\n\0]/;
+	if (bad.test(command) || params.some((p) => bad.test(String(p))) || (trailing !== undefined && bad.test(trailing))) {
+		throw new WireError("command, params, and trailing must not contain CR, LF, or NUL");
+	}
 	const parts = [command.toUpperCase(), ...params.map(String)];
 	let line = parts.join(" ");
 	if (trailing !== undefined) line += ` :${trailing}`;
@@ -122,7 +128,11 @@ export const wire = {
 	nick: (nickname: string) => formatLine({ command: "NICK", params: [nickname] }),
 	user: (username: string, realname: string) =>
 		formatLine({ command: "USER", params: [username, "0", "*"], trailing: realname }),
-	join: (channels: string[]) => formatLine({ command: "JOIN", params: [channels.join(",")] }),
+	join: (channels: string[]) => {
+		const invalid = channels.filter((c) => !/^[#+&][^\s,\x00\x07:]{1,49}$/.test(c));
+		if (invalid.length > 0) throw new WireError(`invalid channel name(s): ${invalid.join(", ")}`);
+		return formatLine({ command: "JOIN", params: [channels.join(",")] });
+	},
 	part: (channel: string, reason?: string) =>
 		reason === undefined
 			? formatLine({ command: "PART", params: [channel] })
