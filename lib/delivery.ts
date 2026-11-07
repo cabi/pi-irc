@@ -16,6 +16,8 @@
 
 import { WireError } from "./wire.ts";
 
+/** Defaults merged in the constructor — every field optional (a raw config
+ * may omit the whole flood section; `undefined` values fall back too). */
 export interface DeliveryOptions {
 	/** Free messages before throttling kicks in. */
 	burst?: number;
@@ -114,16 +116,18 @@ export class DeliveryQueue {
 		return this.opts.maxChunk;
 	}
 
+	private readonly opts: Required<DeliveryOptions>;
 	constructor(
 		private readonly sender: (target: string, text: string) => void,
-		private readonly opts: Required<DeliveryOptions> = {
-			burst: 4,
-			intervalMs: 2000,
-			maxChunk: 400,
-			chunkLong: true,
-			maxQueue: 512,
-		},
+		opts: DeliveryOptions = {},
 	) {
+		this.opts = {
+			burst: opts.burst ?? 4,
+			intervalMs: opts.intervalMs ?? 2000,
+			maxChunk: opts.maxChunk ?? 400,
+			chunkLong: opts.chunkLong ?? true,
+			maxQueue: opts.maxQueue ?? 512,
+		};
 		this.tokens = this.opts.burst;
 	}
 	/** Queue a message; returns the number of chunks it was split into.

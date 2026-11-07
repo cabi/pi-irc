@@ -161,3 +161,26 @@ test("enqueue: queue bound throws instead of growing without limit", () => {
 	assert.throws(() => q.enqueue("a", "four"), /delivery queue full/);
 	assert.equal(q.pending(), 3, "the three queued chunks are intact");
 });
+
+test("partial options fall back to defaults — no NaN pacer timer", async () => {
+	// Regression (P17 live drill): a raw config (tests, smokes) can omit the
+	// whole flood section; undefined must not reach setInterval as NaN
+	// (NaN coerces to a 1 ms busy timer — surfaced as TimeoutNaNWarning).
+	const warnings = [];
+	const onWarn = (w) => warnings.push(w.name);
+	process.on("warning", onWarn);
+	try {
+		const sent = [];
+		const q = new DeliveryQueue((t, x) => sent.push(x));
+		q.start();
+		assert.equal(q.enqueue("a", "one"), 1);
+		assert.equal(q.enqueue("a", "two"), 1);
+		q.drain(); // defaults pace the timer at 500 ms — drain due sends now
+		q.stop();
+		assert.deepEqual(sent, ["one", "two"], "burst defaults (4) send immediately");
+		assert.equal(q.pending(), 0);
+	} finally {
+		process.off("warning", onWarn);
+	}
+	assert.deepEqual(warnings, [], `no timer warnings, got: ${warnings.join(", ")}`);
+});
