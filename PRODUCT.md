@@ -221,6 +221,7 @@ pi-irc/
   - **desiredNick (56c1c13):** a 433-fallback rename is now visible — `status()` carries `desiredNick` whenever the active nick carries a fallback suffix; identity stays anchored on realname `session=` metadata and the SASL account (the 433 retry pool itself existed since P1).
   - Docs drift: README verified current for v0.4.1 keys (flood control, wake default-deny, `tlsCaFile`); misleading `{short}` templates in tests renamed to `{shortId}`; the tool.test.mjs nesting/help complaints were stale — the file is flat and fake-backed.
   - Battery at close: unit 227/227 + tsc clean.
+- **P17 (done)** tiered wake trust, spec in the P17 section below: `delivery.wakeTrust` = `account` (default; P15-b semantics) | `project` (account + agent metadata + our project + project-channel membership) | `none` (allowlist only); allowlist globs apply at every tier; `status()` reports the tier; buffered-DM system lines name the tier that blocked them. 230/230 unit + tsc clean.
 - **Field note (2026-11-07, worker comms-preference experiment):** two channel-neutral worker subagents (same cwd, both auto-connected to `#pi-pi-irc` with busy presence and a live 433 suffix on the second) were told to ask their supervisor one question and report back, mechanism unspecified. Both picked `intercom` for ask *and* report, first try; neither sent a single IRC message despite being registered. Takeaways: on one machine the purpose-built bus wins on friction and wake reliability (8 ms delivery vs IRC's default-deny wake trust); pi-irc's agent⇄agent lane is the cross-machine / human-inclusive case. If in-project IRC should compete: project-peer wake trust (account-verified agents in the project channel auto-allowlisted) and supervisor-nick hints in spawn prompts. Also surfaced: subagent sessions register as role `main` (role detection can't distinguish child sessions), and a stale v0.4.1 status line — fixed in this commit.
 - **Two-plane drill (2026-11-07, follow-up):** with the division stated up front, a worker ran both planes correctly in one task — supervisor coordination entirely on intercom (ask for parameters, send final report), a simulated stock-client human (`hank`, raw RFC 2812, anonymous, no agent metadata → classified human) delivering a mid-task redirection over IRC in a rendezvous channel, and the deliverable posted back to the channel for human/remote readers. Verified end-to-end in 1 m 59 s. Side finding: the ephemeral rendezvous channel vanished with its history when the last member left (unregistered ergo channel) — durable gateways need the one-time ChanServ REGISTER.
 
@@ -309,19 +310,20 @@ pi-irc/
 
 **Validation**: 198/198 unit tests; live two-session catch-up green; `tsc --noEmit` clean.
 
-### P17 — Project-peer wake trust (spec, open)
+### P17 — Tiered wake trust (done)
 
 **Problem.** P15-b made DM wakes default-deny (`delivery.wakeAllowNicks`, empty by default) — the right call against impersonation, but it broke the symmetric case: a *verified peer agent in the same project channel* cannot wake an idle supervisor over IRC. The worker experiments showed the consequence: same-machine traffic migrates entirely to intercom (correct!), but the cross-machine agent⇄agent ask — pi-irc's own lane — dies quietly unless the operator hand-allowlists every child nick, which is unworkable (nicks churn via 433 suffixes, subagents spawn dynamically).
 
 **Trust tier: `delivery.wakeTrust`** (new config key, additive with `wakeAllowNicks`):
 
-- `"none"` (default, current behavior): nobody wakes the session but explicit `wakeAllowNicks` entries.
+- `"account"` (default, P15-b behavior unchanged): any services-account holder wakes.
+- `"none"`: nobody wakes the session but explicit `wakeAllowNicks` entries.
 - `"project"`: a DM sender qualifies for wake when ALL hold:
   1. **SASL-verified account** — extended-join (`JOIN` with account parameter, not `*`) proves the peer authenticated to the server; the server admin's registration policy becomes the root of trust;
   2. **agent metadata** — realname carries the `pi/1 …` fields and `role` is an agent role (humans never wake);
   3. **same project** — realname `project=` equals the local session's project (project-scoped selectors' P16 rule);
   4. the peer is currently a member of our project channel (roster-backed, not just claimed metadata).
-- Account knowledge alone is insufficient; metadata alone is insufficient (P15-b: realname is self-declared). The tier is the AND of server-verified identity and project co-membership.
+- Account knowledge alone is insufficient at `project`; metadata alone is insufficient at every tier (P15-b: realname is self-declared). `project` is the AND of server-verified identity and project co-membership — for operators who do not trust the server's registration policy to vet every account holder.
 
 **Mechanics**:
 - Roster keeps the extended-join account per peer (already parsed); `#maybeWake` consults the tier before the quiet-window throttle (WAKE_QUIET_MS still applies — a flood from a trusted peer still cannot spin the session).

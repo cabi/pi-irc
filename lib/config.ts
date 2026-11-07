@@ -76,6 +76,13 @@ export interface DeliveryConfig {
 	 * trusted nicks/globs here explicitly.
 	 */
 	wakeAllowNicks: string[];
+	/**
+	 * Wake-trust tier (P17). `account` (default, the P15-b behavior): any
+	 * services-account holder wakes; `project`: additionally requires agent
+	 * metadata, our project slug, and project-channel membership; `none`:
+	 * allowlist globs only. The allowlist applies in every tier.
+	 */
+	wakeTrust: "none" | "account" | "project";
 	bufferMax: number;
 	wakeOnDirectMessage: boolean;
 	chunkLongSends: boolean;
@@ -130,6 +137,7 @@ const DEFAULTS = {
 		wakeOnDirectMessage: true,
 		chunkLongSends: true,
 		wakeAllowNicks: [] as string[],
+		wakeTrust: "account" as const,
 		burst: 8,
 		intervalMs: 1000,
 		maxQueue: 512,
@@ -463,6 +471,11 @@ export function loadConfig(opts: {
 				delivery.wakeAllowNicks !== undefined
 					? strList("delivery.wakeAllowNicks", delivery.wakeAllowNicks)
 					: DEFAULTS.delivery.wakeAllowNicks,
+			wakeTrust: (["none", "account", "project"] as const).includes(
+				delivery.wakeTrust as "none" | "account" | "project",
+			)
+				? (delivery.wakeTrust as "none" | "account" | "project")
+				: DEFAULTS.delivery.wakeTrust,
 		},
 		history: { catchupLimit: historyCatchup },
 		projectSlug:

@@ -1,6 +1,8 @@
 // Presence + wake trust: AWAY as busy signal (RFC 2812 §4.1, 305/306
-// confirmations), and the DM-wake allowlist gate (roster agents always wake,
-// humans only when their nick matches a delivery.wakeAllowNicks glob).
+// confirmations), and the tiered DM-wake gate (P17): `account` — any
+// services-account holder wakes; `project` — additionally requires agent
+// metadata, our project, and project-channel membership; allowlist globs
+// apply in every tier.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
@@ -95,6 +97,7 @@ function makeConfig(over = {}) {
 			wakeOnDirectMessage: true,
 			chunkLongSends: true,
 			wakeAllowNicks: over.wakeAllowNicks ?? [],
+			wakeTrust: over.wakeTrust,
 		},
 		projectSlug: "proj",
 	};
@@ -199,4 +202,61 @@ test("wake trust: self-declared agent metadata alone never wakes; an account doe
 	srv.say(":pi-sub-9!pi@h PRIVMSG pi-main-s1 :ask: ready?");
 	assert.equal(wakes.length, 1, "services account bypasses the allowlist");
 	assert.equal(wakes[0].from, "pi-sub-9");
+});
+
+test("wake tier none: allowlist only — even account holders do not wake", async () => {
+	const { srv, session } = await boot({ wakeTrust: "none", wakeAllowNicks: ["ops-*"] });
+	const wakes = [];
+	session.on("wake", (w) => wakes.push(w));
+
+	srv.say(":pi-sub-8!pi@h JOIN #pi-proj pi-sub-8-acct :pi-agent project=proj role=sub");
+	srv.say(":pi-sub-8!pi@h PRIVMSG pi-main-s1 :verified but not enough");
+	assert.equal(wakes.length, 0, "account alone does not wake at tier none");
+
+	srv.say(":ops-9!u@h PRIVMSG pi-main-s1 :glob still works");
+	assert.equal(wakes.length, 1, "allowlist applies at every tier");
+	assert.equal(wakes[0].from, "ops-9");
+});
+
+test("wake tier project: verified same-project agent in the project channel wakes", async () => {
+	const { srv, session } = await boot({ wakeTrust: "project" });
+	const wakes = [];
+	session.on("wake", (w) => wakes.push(w));
+	assert.equal(session.status().wakeTrust, "project", "status() exposes the tier");
+
+	srv.say(":pi-sub-7!pi@h JOIN #pi-proj pi-sub-7-acct :pi-agent project=proj role=sub");
+	srv.say(":pi-sub-7!pi@h PRIVMSG pi-main-s1 :ready?");
+	assert.equal(wakes.length, 1, "account + agent + same project + member → wakes");
+	assert.equal(wakes[0].from, "pi-sub-7");
+});
+
+test("wake tier project: each missing condition blocks independently", async () => {
+	const { srv, session } = await boot({ wakeTrust: "project" });
+	const wakes = [];
+	session.on("wake", (w) => wakes.push(w));
+
+	// Foreign project, otherwise fully verified.
+	srv.say(":pi-other!pi@h JOIN #pi-proj pi-other-acct :pi-agent project=otherproj role=main");
+	srv.say(":pi-other!pi@h PRIVMSG pi-main-s1 :wrong project");
+	assert.equal(wakes.length, 0, "foreign project does not wake");
+
+	// Verified human (registered account, no agent metadata).
+	srv.say(":carsten!u@h JOIN #pi-proj carsten-acct :just a human");
+	srv.say(":carsten!u@h PRIVMSG pi-main-s1 :human here");
+	assert.equal(wakes.length, 0, "verified human does not wake at tier project");
+
+	// Same-project agent, but not a member of our project channel.
+	await session.join(["#other"]);
+	srv.say(":pi-sub-x!pi@h JOIN #other pi-sub-x-acct :pi-agent project=proj role=sub");
+	srv.say(":pi-sub-x!pi@h PRIVMSG pi-main-s1 :not in your channel");
+	assert.equal(wakes.length, 0, "non-member of the project channel does not wake");
+
+	// Anonymous same-project agent (no account).
+	srv.say(":pi-sub-anon!pi@h JOIN #pi-proj * :pi-agent project=proj role=sub");
+	srv.say(":pi-sub-anon!pi@h PRIVMSG pi-main-s1 :no account");
+	assert.equal(wakes.length, 0, "anonymous agent does not wake");
+
+	// Allowlist still overrides at tier project.
+	srv.say(":ops-1!u@h PRIVMSG pi-main-s1 :glob escape hatch");
+	assert.equal(wakes.length, 0, "no allowlist configured in this boot");
 });

@@ -640,7 +640,7 @@ export class IrcSession extends EventEmitter {
 			this.buffer.push({
 				conv: from,
 				from,
-				text: `(DM buffered — ${from} is not wake-trusted: no verified services account and not on the wake allowlist)`,
+				text: `(DM buffered — ${from} is not wake-trusted (tier ${this.config.delivery.wakeTrust ?? "account"}): no qualifying account/project match and not on the wake allowlist)`,
 				kind: "system",
 			});
 			return;
@@ -652,17 +652,31 @@ export class IrcSession extends EventEmitter {
 	}
 
 	/**
-	 * Wake trust is default-deny: a nick wakes us only when it holds a
-	 * services account (extended-join `account` — the one identity on IRC
-	 * that costs a password to obtain) or matches an operator-configured
-	 * glob. Self-declared realname metadata alone never wakes; it is free
-	 * text anyone can send.
+	/**
+	 * Wake trust is tiered (P17), allowlist always applies:
+	 * - `account` (default, P15-b behavior): any services-account holder
+	 *   (extended-join `account` — the one identity on IRC that costs a
+	 *   password) wakes.
+	 * - `project`: additionally requires agent metadata, our project slug,
+	 *   and current membership in our project channel — the AND of
+	 *   server-verified identity and project co-membership.
+	 * - `none`: allowlist globs only.
+	 * Self-declared realname metadata alone never wakes in any tier.
 	 */
 	#wakeTrusted(nick: string): boolean {
-		const peer = this.roster.get(nick);
-		if (peer?.account) return true;
-		return (this.config.delivery.wakeAllowNicks ?? []).some((g) =>
+		const allowed = (this.config.delivery.wakeAllowNicks ?? []).some((g) =>
 			new RegExp(`^${g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*")}$`, "i").test(nick),
+		);
+		if (allowed) return true;
+		const tier = this.config.delivery.wakeTrust ?? "account";
+		if (tier === "none") return false;
+		const peer = this.roster.get(nick);
+		if (!peer?.account) return false;
+		if (tier === "account") return true;
+		return (
+			peer.kind === "agent" &&
+			peer.project === this.config.projectSlug &&
+			(this.channels.get(this.projectChannel)?.members.has(Channels.fold(nick)) ?? false)
 		);
 	}
 
@@ -678,6 +692,7 @@ export class IrcSession extends EventEmitter {
 			project: this.config.projectSlug,
 			projectChannel: this.projectChannel,
 			connection: this.client.state,
+			wakeTrust: this.config.delivery.wakeTrust ?? "account",
 			channels: this.channels.list().map((ch) => ch.name),
 			...(this.#pendingReconnect()
 				? { reconnect: this.#pendingReconnect() }
