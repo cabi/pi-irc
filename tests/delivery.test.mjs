@@ -21,8 +21,49 @@ test("chunkText splits at word boundaries and stamps nothing itself", () => {
 	assert.deepEqual(chunkText("abcdefghijklmnop", 8), ["abcdefgh", "ijklmnop"]);
 });
 
+test("sender throwing WireError drops the chunk instead of blocking the queue", async () => {
+	const { WireError } = await loadViaPi(repoFile("lib", "wire.ts"));
+	const sends = [];
+	const drops = [];
+	const q = new DeliveryQueue(
+		(target, text) => {
+			if (text === "POISON") throw new WireError("line too long");
+			sends.push(text);
+		},
+		{ burst: 10, intervalMs: 1000, maxChunk: 400, chunkLong: false },
+	);
+	q.onDrop = (t, text, err) => drops.push({ t, text, err: err.message });
+	q.enqueue("#c", "POISON");
+	q.enqueue("#c", "after-poison");
+	q.drain(0);
+	assert.deepEqual(sends, ["after-poison"], "queue keeps flowing past the poisoned head");
+	assert.equal(drops.length, 1);
+	assert.equal(drops[0].err, "line too long");
+});
+
 test("chunkText refuses absurd maxChunk", () => {
 	assert.throws(() => chunkText("x", 4));
+});
+
+test("chunkText is byte-aware: CJK and emoji fit the byte budget", () => {
+	// 200 CJK chars = 600 UTF-8 bytes; budget 60 bytes → each part must fit.
+	const cjk = "日本語".repeat(80);
+	const parts = chunkText(cjk, 60);
+	assert.ok(parts.length > 1, "should split");
+	assert.ok(parts.every((p) => Buffer.byteLength(p, "utf8") <= 60), JSON.stringify(parts));
+	assert.equal(parts.join(""), cjk, "lossless reassembly (no spaces to drop)");
+
+	// Emoji are surrogate pairs (4 bytes) — never split mid-pair.
+	const emoji = "🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀";
+	const ep = chunkText(emoji, 24); // 6 emoji per chunk
+	assert.ok(ep.every((p) => Buffer.byteLength(p) <= 24));
+	assert.ok(ep.every((p) => !/[\ud800-\udbff]$/.test(p)), "no dangling high surrogate");
+	assert.equal(ep.join(""), emoji);
+
+	// Mixed content still prefers word boundaries when bytes allow.
+	const mixed = "hello world 你好世界 hello world";
+	const mp = chunkText(mixed, 20);
+	assert.ok(mp.every((p) => Buffer.byteLength(p) <= 20));
 });
 
 test("burst allows N immediate sends, then throttles", () => {

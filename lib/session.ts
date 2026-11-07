@@ -164,6 +164,8 @@ export class IrcSession extends EventEmitter {
 			(target, text) => this.client.privmsg(target, text),
 			{ burst: 4, intervalMs: 2000, maxChunk: 400, chunkLong: config.delivery.chunkLongSends },
 		);
+		this.delivery.onDrop = (target, text, err) =>
+			console.warn(`pi-irc: dropped unsendable chunk to ${target} (${err.message}): ${text.slice(0, 60)}…`);
 		this.#wireEvents();
 		this.delivery.start();
 	}

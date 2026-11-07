@@ -9,10 +9,12 @@
  * then 1-2 msgs/sec) without knowing the server's exact configuration.
  *
  * Chunking — a PRIVMSG line must fit in 512 bytes including the
- * ":nick!user@host PREFIX TARGET :" envelope. We chunk at `maxChunk`
- * (default 400) UTF-16 code units, preferring spaces as split points,
- * and stamp " (i/n)" on every chunk when a message splits.
+ * ":nick!user@host PRIVMSG TARGET :" envelope. We chunk at `maxChunk`
+ * (default 400) UTF-8 bytes — the same unit as the 512-byte line cap —
+ * preferring spaces as split points, and stamp " (i/n)" on every chunk
  */
+
+import { WireError } from "./wire.ts";
 
 export interface DeliveryOptions {
 	/** Free messages before throttling kicks in. */
@@ -39,23 +41,65 @@ interface QueueItem {
 	nextIndex: number;
 }
 
-/** Split text into ≤maxChunk pieces at word boundaries where possible. */
+/**
+ * Split text into pieces of at most `maxChunk` UTF-8 BYTES, preferring
+ * spaces as split points. Byte-aware, not code-unit-aware: IRC lines are
+ * capped at 512 bytes, and CJK text (3 bytes/char) would blow that budget
+ * long before 400 characters. Surrogate pairs never split mid-pair.
+ */
 export function chunkText(text: string, maxChunk: number): string[] {
 	if (maxChunk < 8) throw new Error("maxChunk must be >= 8");
-	if (text.length <= maxChunk) return [text];
+	if (byteLength(text) <= maxChunk) return [text];
 	const chunks: string[] = [];
-	let rest = text;
-	while (rest.length > maxChunk) {
-		let cut = rest.lastIndexOf(" ", maxChunk);
-		if (cut < Math.ceil(maxChunk / 2)) cut = maxChunk; // no good space: hard split
-		chunks.push(rest.slice(0, cut));
-		rest = rest.slice(cut === maxChunk ? cut : cut + 1);
+	let start = 0;
+	while (start < text.length) {
+		let bytes = 0;
+		let end = start;
+		let lastSpace = -1;
+		let bytesAtSpace = 0;
+		while (end < text.length) {
+			const size = charBytes(text, end);
+			if (bytes + size > maxChunk) break;
+			if (text.charCodeAt(end) === 0x20) {
+				lastSpace = end;
+				bytesAtSpace = bytes;
+			}
+			bytes += size;
+			end += size === 4 ? 2 : 1; // surrogate pair advances two units
+		}
+		// Prefer a word boundary unless it would shrink the chunk below half budget.
+		let cut = end;
+		if (end < text.length && lastSpace > start && bytesAtSpace >= Math.ceil(maxChunk / 2)) cut = lastSpace;
+		chunks.push(text.slice(start, cut));
+		// A space split consumes the space; a hard split consumes exactly what fit.
+		start = cut === lastSpace ? cut + 1 : cut;
 	}
-	if (rest.length > 0) chunks.push(rest);
 	return chunks;
 }
 
+/** UTF-8 byte length of one code point at index i (surrogate pair = 4). */
+function charBytes(s: string, i: number): number {
+	const code = s.charCodeAt(i);
+	if (code < 0x80) return 1;
+	if (code < 0x800) return 2;
+	if (code >= 0xd800 && code <= 0xdbff) return 4;
+	if (code >= 0xdc00 && code <= 0xdfff) return 0; // low half of a pair
+	return 3;
+}
+
+function byteLength(s: string): number {
+	let bytes = 0;
+	for (let i = 0; i < s.length; ) {
+		const size = charBytes(s, i) || 1; // orphan low surrogate: degenerate, count as 1
+		bytes += size;
+		i += size === 4 ? 2 : 1;
+	}
+	return bytes;
+}
+
 export class DeliveryQueue {
+	/** Optional sink notified when a chunk is dropped as unsendable. */
+	onDrop?: (target: string, text: string, err: Error) => void;
 	private queue: QueueItem[] = [];
 	private tokens: number;
 	private lastSendAt: number | null = null;
@@ -113,7 +157,18 @@ export class DeliveryQueue {
 			if (item.part) part = { i: item.nextIndex + 1, n: item.part.n };
 			try {
 				this.sender(item.target, text);
-			} catch {
+			} catch (err) {
+				if (err instanceof WireError) {
+					// Permanent rejection (e.g. exceeds the 512-byte line cap):
+					// retrying can never help — drop this chunk so the queue
+					// keeps flowing instead of blocking on it forever.
+					this.onDrop?.(item.target, text, err);
+					item.nextIndex += 1;
+					this.tokens -= 1;
+					this.lastSendAt = now;
+					if (item.nextIndex >= item.chunks.length) this.queue.shift();
+					continue;
+				}
 				// Transport died mid-drain: leave the chunk queued (indices
 				// untouched) — pause()/socketClosed owns the state from here.
 				break;
