@@ -58,6 +58,13 @@ export class Channels {
 		this.get(channel)?.members.delete(Channels.fold(nick));
 	}
 
+	/** True if the nick is still tracked in ANY channel we're in. */
+	memberAnywhere(nick: string): boolean {
+		const key = Channels.fold(nick);
+		for (const state of this.channels.values()) if (state.members.has(key)) return true;
+		return false;
+}
+
 	/** Someone quit the server: drop them from every channel. */
 	removeMemberEverywhere(nick: string): string[] {
 		const key = Channels.fold(nick);

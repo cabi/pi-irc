@@ -284,3 +284,67 @@ test("stop sends QUIT once and stops the queue", async () => {
 	const quits = srv.lines.filter((l) => l.startsWith("QUIT"));
 	assert.equal(quits.length, 1);
 });
+
+// ---- P16: roster lifecycle, WHO batching, msgid ring, project-scoped selectors ----
+
+test("P16: peer who parts every shared channel is forgotten; sharing one keeps them", async () => {
+	const { srv, session } = await boot({ defaults: ["#pi-ops"] });
+	// bess joins both channels (NAMES-style presence).
+	srv.say(":bess!u@h JOIN #pi-proj");
+	srv.say(":bess!u@h JOIN #pi-ops");
+	await tick(30);
+	assert.ok(session.roster.get("bess"), "bess known");
+	srv.say(":bess!u@h PART #pi-proj :bye");
+	await tick(10);
+	assert.ok(session.roster.get("bess"), "still shares #pi-ops → kept");
+	srv.say(":bess!u@h PART #pi-ops");
+	await tick(10);
+	assert.ok(!session.roster.get("bess"), "no shared channel left → forgotten");
+	session.stop();
+});
+
+test("P16: role/@session selectors never cross project lines", async () => {
+	const { srv, session } = await boot();
+	// A foreign-project agent shares our channel (extended-join carries the
+	// full realname: project=other, role=main, session=beef00).
+	srv.say(":pi-main-beef00!u@h JOIN #pi-proj * :pi-agent project=other role=main session=beef00");
+	await tick(20);
+	assert.ok(session.roster.get("pi-main-beef00"), "foreign agent on roster");
+	assert.throws(() => session.resolveTarget("main"), /no main agent/, "foreign main is invisible to role selectors");
+	assert.throws(() => session.resolveTarget("@beef"), /no agent session/, "foreign session id is invisible to @selectors");
+	// Raw nick still reaches them — that is the documented cross-project path.
+	assert.equal(session.resolveTarget("pi-main-beef00"), "pi-main-beef00");
+	session.stop();
+});
+
+test("P16: foreign joins batch into one WHO flush, deduped per nick", async () => {
+	const { srv, session } = await boot();
+	const mark = srv.lines.length;
+	// Five foreign joins without realname (RFC 2812 style), one nick twice.
+	for (const n of ["u1", "u2", "u3", "u4", "u2"]) srv.say(`:${n}!u@h JOIN #pi-proj`);
+	await tick(30); // way below the 500 ms flush window
+	assert.equal(srv.lines.slice(mark).filter((l) => l.startsWith("WHO")).length, 0, "no WHO fired during the batch window");
+	await tick(600); // flush elapsed
+	const whos = srv.lines.slice(mark).filter((l) => l.startsWith("WHO"));
+	assert.deepEqual(whos.map((l) => l.slice(4).split(" ")[0]), ["u1", "u2", "u3", "u4"], "one flush, deduped, WHOX form");
+	session.stop();
+});
+
+test("P16: msgid dedup evicts oldest instead of wiping the window", async () => {
+	const { srv, session } = await boot();
+	// 1 + 8000 distinct msgids pushes "oldest" out of the 8000-entry ring;
+	// the most recent ones must still dedup a replay/live overlap.
+	srv.say("@msgid=oldest :carol!u@h PRIVMSG pi-main-s1 :seed");
+	for (let i = 0; i < 8_000; i++) srv.say(`@msgid=m${i} :carol!u@h PRIVMSG pi-main-s1 :fill-${i}`);
+	// After eviction: oldest repeats (window edge moved), m7999 still dedups.
+	srv.say("@msgid=oldest :carol!u@h PRIVMSG pi-main-s1 :dup-evicted");
+	srv.say("@msgid=m7999 :carol!u@h PRIVMSG pi-main-s1 :dup-recent");
+	const texts = session.read({ conv: "carol", limit: 10_000 }).map((m) => m.text);
+	assert.ok(!texts.includes("dup-recent"), "recent msgid still deduped after 8000 inserts");
+	assert.ok(texts.includes("dup-evicted"), "the evicted oldest msgid is delivered once more — ring edge, not a wipe");
+	// bufferMax 50 keeps only the tail of the fill; each survivor delivered once.
+	for (const t of ["fill-7999", "fill-7998"]) assert.equal(texts.filter((x) => x === t).length, 1, `${t} exactly once`);
+	session.stop();
+});
+
+const tick = (ms) => new Promise((r) => setTimeout(r, ms));

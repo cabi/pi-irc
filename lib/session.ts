@@ -112,6 +112,11 @@ function connectOptsFor(config: PiIrcConfig): {
 // parity means a follow-up DM after a settled turn still wakes the peer.
 const WAKE_QUIET_MS = 5_000;
 const DEFAULT_ASK_TIMEOUT_SEC = 600;
+/** Roster ghosts (peers whose departure we never learned) expire after a day. */
+const ROSTER_TTL_MS = 24 * 60 * 60 * 1000;
+const ROSTER_SWEEP_MS = 60 * 60 * 1000;
+/** Batch foreign-join WHO lookups on RFC 2812 servers into one flush. */
+const WHO_FLUSH_MS = 500;
 
 export class IrcSession extends EventEmitter {
 	readonly config: PiIrcConfig;
@@ -131,6 +136,11 @@ export class IrcSession extends EventEmitter {
 
 /** msgids already buffered — kills replay/live double delivery. */
 	#seenMsgIds = new Set<string>();
+	/** Pending WHO lookups on servers without extended-join — deduped, flushed in one batch. */
+	#whoPending = new Set<string>();
+	#whoTimer: ReturnType<typeof setTimeout> | null = null;
+	/** Safety-net sweep for roster ghosts QUIT/PART never reported. */
+	#rosterSweep: ReturnType<typeof setInterval> | null = null;
 	/** Serialized CHATHISTORY fetches (one in flight; later targets queue). */
 	#catchupTail: Promise<unknown> = Promise.resolve();
 	/** history.catchupLimit resolved once (fixtures may omit the section). */
@@ -174,6 +184,8 @@ export class IrcSession extends EventEmitter {
 			console.warn(`pi-irc: dropped unsendable chunk to ${target} (${err.message}): ${text.slice(0, 60)}…`);
 		this.#wireEvents();
 		this.delivery.start();
+		this.#rosterSweep = setInterval(() => this.roster.expire(ROSTER_TTL_MS), ROSTER_SWEEP_MS);
+		this.#rosterSweep.unref?.();
 	}
 
 	/**
@@ -283,7 +295,14 @@ export class IrcSession extends EventEmitter {
 			if (e.msgid) {
 				if (this.#seenMsgIds.has(e.msgid)) return;
 				this.#seenMsgIds.add(e.msgid);
-				if (this.#seenMsgIds.size > 8_000) this.#seenMsgIds.clear();
+				if (this.#seenMsgIds.size > 8_000) {
+					// Ring eviction, not clear(): a full wipe would reopen the
+					// replay/live overlap window for every buffered msgid.
+					for (const oldest of this.#seenMsgIds) {
+						this.#seenMsgIds.delete(oldest);
+						if (this.#seenMsgIds.size <= 8_000) break;
+					}
+				}
 			}
 			// Lines inside a batch are server-replayed history: buffered like
 			// live ones (so `read` shows them) but never wake anyone.
@@ -371,14 +390,19 @@ export class IrcSession extends EventEmitter {
 			// only fall back to WHO when the server didn't.
 			if (!e.self && e.realname !== undefined) {
 				this.roster.applyRealname(e.nick, e.realname);
-			} else if (!e.self) {
-				this.client.who(e.nick); // learn realname of the newcomer
+		} else if (!e.self) {
+				this.#queueWho(e.nick); // learn the newcomer's realname (batched)
 			}
 		});
 		c.on("part", (e) => {
 			if (e.self) this.channels.part(e.channel);
-			else this.channels.removeMember(e.channel, e.nick);
-		});
+			else {
+				this.channels.removeMember(e.channel, e.nick);
+				// Gone from every shared channel → not a peer anymore. (Still
+				// sharing one → keep the entry; QUIT remains the hard signal.)
+				if (!this.channels.memberAnywhere(e.nick)) this.roster.forget(e.nick);
+			}
+	});
 		c.on("away", (e) => this.roster.touch(e.nick, { away: e.away }));
 		c.on("kick", (e) => this.#handleKick(e));
 		c.on("quit", (e) => {
@@ -394,6 +418,23 @@ export class IrcSession extends EventEmitter {
 		c.on("socketClosed", () => this.#onDrop());
 	}
 
+	/**
+	 * Batch WHO lookups for foreign joins on servers without extended-join:
+	 * a busy channel joining dozens of users must not fire WHO per JOIN.
+	 * Deduped; one flush per WHO_FLUSH_MS window sends them all.
+	 */
+	#queueWho(nick: string): void {
+		if (this.#whoPending.has(nick)) return;
+		this.#whoPending.add(nick);
+		if (this.#whoTimer) return;
+		this.#whoTimer = setTimeout(() => {
+			this.#whoTimer = null;
+			const nicks = [...this.#whoPending];
+			this.#whoPending.clear();
+			for (const n of nicks) this.client.who(n);
+		}, WHO_FLUSH_MS);
+		this.#whoTimer.unref?.();
+	}
 	/**
 	 * The link died (server restart, network flap, ping timeout). Pause
 	 * pacing — queued intent survives — and schedule the first reconnect.
@@ -666,7 +707,12 @@ export class IrcSession extends EventEmitter {
 	 */
 	resolveTarget(spec: string): string {
 		if (/^[#&+]/.test(spec)) return spec;
-		const agents = this.roster.all().filter((p) => !p.self && p.session);
+		// Selectors are project-scoped: role words and @session ids only ever
+		// resolve inside OUR project — foreign agents on a shared server are
+		// addressed by their raw nick (visible via `irc roster`).
+		const agents = this.roster
+			.all()
+			.filter((p) => !p.self && p.session && p.project === this.config.projectSlug);
 		const fail = (why: string, known: Peer[]) =>
 			new Error(`${why} (known agents: ${known.map((p) => `${p.nick} @${p.session}`).join(", ") || "none"})`);
 		if (spec.startsWith("@")) {
@@ -809,6 +855,15 @@ export class IrcSession extends EventEmitter {
 		this.#cancelScheduled = null;
 		this.#cancelKickRejoin?.();
 		this.#cancelKickRejoin = null;
+		if (this.#whoTimer) {
+			clearTimeout(this.#whoTimer);
+			this.#whoTimer = null;
+		}
+		this.#whoPending.clear();
+		if (this.#rosterSweep) {
+			clearInterval(this.#rosterSweep);
+			this.#rosterSweep = null;
+		}
 		this.rpc.dispose();
 		this.delivery.stop();
 		try {
