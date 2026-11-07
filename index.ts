@@ -16,6 +16,7 @@ import type { IdentityContext } from "./lib/identity.ts";
 import { IrcSession } from "./lib/session.ts";
 import { IRC_SUBCOMMANDS, runIrcCommand } from "./lib/commands.ts";
 import { executeIrcOp, IRC_OPS, type IrcToolParams } from "./lib/tool.ts";
+import { errorMessage } from "./lib/errors.ts";
 
 /** Where the admin keeps the global config (PRODUCT.md "Configuration"). */
 function globalConfigPath(): string {
@@ -105,7 +106,7 @@ export default function (pi: ExtensionAPI) {
 		// Background bootstrap: never block startup on the network. A hard
 		// failure surfaces on the first `irc` tool call (ensureSession).
 		void ensureSession(ctx).catch((err: unknown) => {
-			notify(`pi-irc: connect failed — ${(err as Error).message}`, "warning");
+			notify(`pi-irc: connect failed — ${errorMessage(err)}`, "warning");
 		});
 	});
 
@@ -129,7 +130,7 @@ export default function (pi: ExtensionAPI) {
 				const r = await runIrcCommand(() => ensureSession(ctx), args);
 				ctx.ui.notify(r.message, r.level);
 			} catch (err) {
-				ctx.ui.notify(`pi-irc: ${(err as Error).message}`, "warning");
+				ctx.ui.notify(`pi-irc: ${errorMessage(err)}`, "warning");
 			}
 		},
 	});
@@ -192,6 +193,9 @@ export default function (pi: ExtensionAPI) {
 				id: Type.Optional(Type.String({ description: "reply: the ask id to answer (answer in `text`)" })),
 			}),
 			async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+				// JUSTIFICATION: the parameters schema mixes pi-schema (StringEnum)
+				// and typebox types, so `params` is statically unknown here; the
+				// harness has already validated it against the schema above.
 				const r = await executeIrcOp(() => ensureSession(ctx), String(params.op ?? ""), params as IrcToolParams);
 
 				return { content: r.content, details: r.details };

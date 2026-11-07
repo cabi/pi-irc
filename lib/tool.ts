@@ -55,15 +55,27 @@ export interface IrcToolParams {
 
 export interface IrcToolResult {
 	content: Array<{ type: "text"; text: string }>;
-	details: Record<string, unknown>;
+	details: unknown;
 }
 
-function text(body: string, details: Record<string, unknown> = {}): IrcToolResult {
+function text(body: string, details: unknown = {}): IrcToolResult {
 	return { content: [{ type: "text", text: body }], details };
 }
 
 function fmtTime(ts: number): string {
 	return new Date(ts).toISOString().slice(11, 16);
+}
+
+/** Object-like values (arrays included) render as JSON; everything else as text. */
+function isJsonIsh(value: unknown): value is object {
+	return typeof value === "object" && value !== null;
+}
+
+const OP_NAMES: readonly string[] = IRC_OPS;
+
+/** Runtime op check — the schema already constrains it; this is belt and braces. */
+function isIrcOp(value: string): value is IrcOp {
+	return OP_NAMES.includes(value);
 }
 
 /** Execute one `irc` op against a live (or to-be-booted) session. */
@@ -72,7 +84,7 @@ export async function executeIrcOp(
 	op: string,
 	params: IrcToolParams,
 ): Promise<IrcToolResult> {
-	if (!(IRC_OPS as readonly string[]).includes(op)) {
+	if (!isIrcOp(op)) {
 		throw new Error(`unknown op "${op}" — use one of: ${IRC_OPS.join(", ")}`);
 	}
 
@@ -88,10 +100,10 @@ export async function executeIrcOp(
 			);
 
 		case "status": {
-			const st = session.status() as Record<string, unknown>;
+			const st = session.status();
 
 			const lines = Object.entries(st).map(([k, v]) => {
-				const value = typeof v === "object" && v !== null ? JSON.stringify(v) : String(v);
+				const value = isJsonIsh(v) ? JSON.stringify(v) : String(v);
 
 				return `${k}: ${value}`;
 			});
@@ -133,7 +145,7 @@ export async function executeIrcOp(
 			const tail = r.chunks > 1 ? ` (split into ${r.chunks} chunks)` : "";
 			const queued = r.pending > 0 ? ` [${r.pending} queued behind flood limit]` : "";
 
-			return text(`sent to ${where}${tail}${queued}`, r as unknown as Record<string, unknown>);
+			return text(`sent to ${where}${tail}${queued}`, r);
 		}
 
 		case "read": {
@@ -175,19 +187,16 @@ export async function executeIrcOp(
 			const res = await session.ask(params.peer, params.text, params.timeout);
 
 			if (res.status === "replied") {
-				return text(`${params.peer} replied: ${res.reply}`, res as unknown as Record<string, unknown>);
+				return text(`${params.peer} replied: ${res.reply}`, res);
 			}
 
 			if (res.status === "disposed") {
-				return text(
-					`ask aborted — session stopped before ${params.peer} answered`,
-					res as unknown as Record<string, unknown>,
-				);
+				return text(`ask aborted — session stopped before ${params.peer} answered`, res);
 			}
 
 			return text(
 				`no answer from ${params.peer} within ${Math.round(res.timeoutMs / 1000)}s — the ask is still visible to them; retry or send directly`,
-				res as unknown as Record<string, unknown>,
+				res,
 			);
 		}
 
@@ -204,7 +213,7 @@ export async function executeIrcOp(
 
 			const r = session.reply(params.id, params.text);
 
-			return text(`replied to ${r.to} (ask id=${r.id})`, r as unknown as Record<string, unknown>);
+			return text(`replied to ${r.to} (ask id=${r.id})`, r);
 		}
 
 		case "pending": {
@@ -272,7 +281,7 @@ export async function executeIrcOp(
 		}
 
 		case "help": {
-			const st = session.status() as { nick?: string; projectChannel?: string };
+			const st = session.status();
 
 			return text(
 				[

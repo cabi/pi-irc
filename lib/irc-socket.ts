@@ -17,8 +17,8 @@ export interface ConnectOptions {
 	serverName?: string;
 	/** TLS only: PEM bundle overriding the trust store (internal CAs / self-signed). */
 	ca?: Buffer;
-	/** Connection timeout in ms (default 15000). */
-	timeoutMs?: number;
+	/** Connection timeout in ms (always resolved by the session layer). */
+	timeoutMs: number;
 }
 
 export class IrcSocket extends EventEmitter {

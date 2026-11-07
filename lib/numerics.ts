@@ -60,7 +60,9 @@ export const NUMERICS = {
 
 export type NumericName = keyof typeof NUMERICS;
 
-const NAMES: Map<number, string> = new Map(Object.entries(NUMERICS).map(([name, code]) => [code as number, name]));
+const NAMES: Map<number, string> = new Map(
+	Object.entries(NUMERICS).map(([name, code]): [number, string] => [code, name]),
+);
 
 /** Canonical name for a numeric code, or `NNN` when not in the table. */
 export function numericName(code: number): string {

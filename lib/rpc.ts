@@ -34,7 +34,10 @@ export function parseEnvelope(text: string): AskEnvelope | null {
 	const body = text.slice(m[0].length);
 
 	if (!body.trim()) return null; // empty body: not a real envelope, just text
-	const env: AskEnvelope = { kind: m[1] as "ask" | "reply", id: m[2], body };
+	const kind = m[1];
+
+	if (kind !== "ask" && kind !== "reply") return null;
+	const env: AskEnvelope = { kind, id: m[2], body };
 
 	if (m[3] !== undefined) env.timeoutSec = Number(m[3]);
 
@@ -233,6 +236,18 @@ export type AskResolution =
 	| { status: "timeout"; id: string; peer: string; question: string; timeoutMs: number }
 	| { status: "disposed"; id: string; peer: string; question: string };
 
+/** What `trackOutbound()` hands back: the ask id plus its resolution promise. */
+export interface TrackedOutbound {
+	id: string;
+	done: Promise<AskResolution>;
+}
+
+/** Recent asks in both directions, newest first (`list()`). */
+export interface AskLists {
+	outbound: OutboundAsk[];
+	inbound: InboundAsk[];
+}
+
 export interface AskRegistryOptions {
 	now?: () => number;
 	setTimer?: (ms: number, fn: () => void) => unknown;
@@ -265,19 +280,14 @@ export class AskRegistry {
 	constructor(opts: AskRegistryOptions = {}) {
 		this.#now = opts.now ?? (() => Date.now());
 		this.#setTimer = opts.setTimer ?? ((ms, fn) => setTimeout(fn, ms));
+		// JUSTIFICATION: timer handles are opaque values (tests inject fakes);
+		// Node's clearTimeout accepts any handle shape — the cast only satisfies TS.
 		this.#clearTimer = opts.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
 		this.#idGen = opts.idGen ?? DEFAULT_ID_GEN;
 	}
 
 	/** Register an ask we sent; returns its id and its resolution promise. */
-	trackOutbound(
-		peer: string,
-		question: string,
-		timeoutMs: number,
-	): {
-		id: string;
-		done: Promise<AskResolution>;
-	} {
+	trackOutbound(peer: string, question: string, timeoutMs: number): TrackedOutbound {
 		const id = this.#idGen();
 
 		const entry: OutboundAsk = {
@@ -368,7 +378,7 @@ export class AskRegistry {
 	}
 
 	/** Recent entries in both directions for the `pending` op (newest first). */
-	list(limit = 10): { outbound: OutboundAsk[]; inbound: InboundAsk[] } {
+	list(limit = 10): AskLists {
 		const outbound = [...this.#outbound.values()].sort((a, b) => b.sentAt - a.sentAt).slice(0, limit);
 		const inbound = [...this.#inbound.values()].sort((a, b) => b.receivedAt - a.receivedAt).slice(0, limit);
 
@@ -390,14 +400,18 @@ export class AskRegistry {
 		}
 
 		while (this.#outbound.size > 256) {
-			const oldest = this.#outbound.keys().next().value as string;
+			const oldest = this.#outbound.keys().next().value;
+
+			if (oldest === undefined || this.#outbound.get(oldest)?.state === "waiting") break; // never evict live asks
 
 			if (this.#outbound.get(oldest)?.state === "waiting") break; // never evict live asks
 			this.#outbound.delete(oldest);
 		}
 
 		while (this.#inbound.size > 256) {
-			const oldest = this.#inbound.keys().next().value as string;
+			const oldest = this.#inbound.keys().next().value;
+
+			if (oldest === undefined || this.#inbound.get(oldest)?.resolvedAt === undefined) break;
 
 			if (this.#inbound.get(oldest)?.resolvedAt === undefined) break;
 			this.#inbound.delete(oldest);

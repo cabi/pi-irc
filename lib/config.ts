@@ -14,6 +14,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { errorMessage } from "./errors.ts";
 
 export interface ServerConfig {
 	host: string;
@@ -117,26 +118,36 @@ export class ConfigError extends Error {
 	}
 }
 
-const DEFAULTS = {
+/** Fallbacks for every optional config field (see the *Config interfaces). */
+type Defaults = {
+	server: Pick<ServerConfig, "port" | "tls">;
+	nick: NickConfig;
+	channels: ChannelsConfig;
+	capabilities: CapabilitiesConfig;
+	delivery: DeliveryConfig;
+	history: HistoryConfig;
+};
+
+const DEFAULTS: Defaults = {
 	server: { port: 6697, tls: true },
 	nick: { template: "pi-{role}-{shortId}", maxLen: 30 },
 	channels: {
 		projectTemplate: "#pi-{slug}",
-		defaults: [] as string[],
+		defaults: [],
 		autoCreate: true,
 		topicTemplate: "pi project {slug} — created {date}",
 		kickRejoinDelayMs: 3_000,
 	},
 	// IRCv3 caps to request; unknown ones are answered with CAP NAK and skipped.
 	capabilities: {
-		request: ["extended-join", "server-time", "away-notify", "batch", "draft/chathistory"] as string[],
+		request: ["extended-join", "server-time", "away-notify", "batch", "draft/chathistory"],
 	},
 	delivery: {
 		bufferMax: 500,
 		wakeOnDirectMessage: true,
 		chunkLongSends: true,
-		wakeAllowNicks: [] as string[],
-		wakeTrust: "account" as const,
+		wakeAllowNicks: [],
+		wakeTrust: "account",
 		burst: 8,
 		intervalMs: 1000,
 		maxQueue: 512,
@@ -271,35 +282,56 @@ function readJson(file: string, label: string): Json {
 		try {
 			parsed = JSON.parse(stripJsonc(raw));
 		} catch (e) {
-			throw new ConfigError(label, `invalid JSON (${(e as Error).message})`);
+			throw new ConfigError(label, `invalid JSON (${errorMessage(e)})`);
 		}
 	}
 
-	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+	if (!isJsonObject(parsed)) {
 		throw new ConfigError(label, "expected a JSON object");
 	}
 
-	return parsed as Json;
+	return parsed;
 }
 
-function str(obj: Json, key: string, value: unknown): string {
-	if (typeof value !== "string" || value.length === 0) {
-		throw new ConfigError(key, "expected a non-empty string");
-	}
+/** Plain JSON object (arrays and null rejected) — the shape every section must have. */
+function isJsonObject(value: unknown): value is Json {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+	return typeof value === "string" && value.length > 0;
+}
+
+function isIntInRange(value: unknown, min: number, max: number): value is number {
+	return typeof value === "number" && Number.isInteger(value) && value >= min && value <= max;
+}
+
+function isBoolean(value: unknown): value is boolean {
+	return typeof value === "boolean";
+}
+
+const WAKE_TRUST_TIERS = ["none", "account", "project"] as const;
+
+const WAKE_TRUST_SET: ReadonlySet<string> = new Set<string>(WAKE_TRUST_TIERS);
+
+function isWakeTrust(value: unknown): value is (typeof WAKE_TRUST_TIERS)[number] {
+	return typeof value === "string" && WAKE_TRUST_SET.has(value);
+}
+
+function str(key: string, value: unknown): string {
+	if (!isNonEmptyString(value)) throw new ConfigError(key, "expected a non-empty string");
 
 	return value;
 }
 
-function int(obj: Json, key: string, value: unknown, min: number, max: number): number {
-	if (!Number.isInteger(value) || (value as number) < min || (value as number) > max) {
-		throw new ConfigError(key, `expected an integer ${min}–${max}`);
-	}
+function int(key: string, value: unknown, min: number, max: number): number {
+	if (!isIntInRange(value, min, max)) throw new ConfigError(key, `expected an integer ${min}–${max}`);
 
-	return value as number;
+	return value;
 }
 
-function bool(obj: Json, key: string, value: unknown): boolean {
-	if (typeof value !== "boolean") throw new ConfigError(key, "expected a boolean");
+function bool(key: string, value: unknown): boolean {
+	if (!isBoolean(value)) throw new ConfigError(key, "expected a boolean");
 
 	return value;
 }
@@ -308,7 +340,7 @@ function channelList(key: string, value: unknown): string[] {
 	if (!Array.isArray(value)) throw new ConfigError(key, "expected an array of channel names");
 
 	return value.map((v, i) => {
-		const name = str({} as Json, `${key}[${i}]`, v);
+		const name = str(`${key}[${i}]`, v);
 
 		if (!CHANNEL_NAME.test(name) || name.length > 200) {
 			throw new ConfigError(`${key}[${i}]`, `not a valid channel name: ${JSON.stringify(name)}`);
@@ -322,7 +354,18 @@ function channelList(key: string, value: unknown): string[] {
 function strList(key: string, value: unknown): string[] {
 	if (!Array.isArray(value)) throw new ConfigError(key, "expected an array of strings");
 
-	return value.map((v, i) => str({} as Json, `${key}[${i}]`, v));
+	return value.map((v, i) => str(`${key}[${i}]`, v));
+}
+
+/** One merged section: object shape re-checked, absent → empty object. */
+function section(merged: Json, name: string): Json {
+	const value = merged[name];
+
+	if (value === undefined) return {};
+
+	if (!isJsonObject(value)) throw new ConfigError(name, "expected an object");
+
+	return value;
 }
 
 /**
@@ -351,9 +394,9 @@ export function loadConfig(opts: {
 	const slugOverride = [project.slug, global.slug].find((s) => s !== undefined);
 	// Trust boundary: a project file lives in the repo and is only as
 	// trustworthy as the repo. Identity, transport, and trust settings
-	// (server, nick, delivery, auth) come from the admin's global file
+	// (server, nick,  auth) come from the admin's global file
 	// alone; project files may only shape channel participation and
-	// catch-up (channels, capabilities, history, slug).
+	// catch-up ( capabilities, history, slug).
 	const PROJECT_ALLOWED = new Set(["channels", "capabilities", "history"]);
 	const merged: Json = {};
 
@@ -361,84 +404,82 @@ export function loadConfig(opts: {
 		const g = global[section];
 		const p = project[section];
 
-		if (g !== undefined && (typeof g !== "object" || g === null || Array.isArray(g))) {
+		if (g !== undefined && !isJsonObject(g)) {
 			throw new ConfigError(section, "expected an object");
 		}
 
-		if (p !== undefined && (typeof p !== "object" || p === null || Array.isArray(p))) {
+		if (p !== undefined && !isJsonObject(p)) {
 			throw new ConfigError(section, "expected an object");
 		}
 
 		if (p !== undefined && !PROJECT_ALLOWED.has(section)) {
 			console.warn(`pi-irc: ignoring "${section}" in project config — admin-owned, set it in the global config`);
-			merged[section] = { ...(g as Json | undefined) };
+			merged[section] = { ...g };
 			continue;
 		}
 
-		merged[section] = { ...(g as Json | undefined), ...(p as Json | undefined) };
+		merged[section] = { ...g, ...p };
 	}
 
 	// auth was never part of the merge (a P14 finding): it is global-only.
 	if (global.auth !== undefined) {
-		if (typeof global.auth !== "object" || global.auth === null || Array.isArray(global.auth)) {
+		if (!isJsonObject(global.auth)) {
 			throw new ConfigError("auth", "expected an object");
 		}
 
-		merged.auth = global.auth as Json;
+		merged.auth = global.auth;
 	}
 
 	if (project.auth !== undefined) {
 		console.warn('pi-irc: ignoring "auth" in project config — admin-owned, set it in the global config');
 	}
 
-	const server = merged.server as Json;
-	const nick = merged.nick as Json;
-	const channels = merged.channels as Json;
-	const capabilities = merged.capabilities as Json;
-	const delivery = merged.delivery as Json;
-	const history = merged.history as Json;
+	const server = section(merged, "server");
+	const nick = section(merged, "nick");
+	const channels = section(merged, "channels");
+	const capabilities = section(merged, "capabilities");
+	const delivery = section(merged, "delivery");
+	const history = section(merged, "history");
 
 	const historyCatchup =
 		history.catchupLimit !== undefined
-			? int(history, "history.catchupLimit", history.catchupLimit, 0, 1000)
+			? int("history.catchupLimit", history.catchupLimit, 0, 1000)
 			: DEFAULTS.history.catchupLimit;
 
-	const host = server.host !== undefined ? str(server, "server.host", server.host) : undefined;
+	const host = server.host !== undefined ? str("server.host", server.host) : undefined;
 
 	if (host === undefined) {
 		throw new ConfigError("server.host", "required and admin-owned (set it in the global config)");
 	}
 
-	const passwordEnv =
-		server.passwordEnv !== undefined ? str(server, "server.passwordEnv", server.passwordEnv) : undefined;
+	const passwordEnv = server.passwordEnv !== undefined ? str("server.passwordEnv", server.passwordEnv) : undefined;
 
-	const tlsInsecure =
-		server.tlsInsecure !== undefined ? bool(server, "server.tlsInsecure", server.tlsInsecure) : undefined;
+	const tlsInsecure = server.tlsInsecure !== undefined ? bool("server.tlsInsecure", server.tlsInsecure) : undefined;
 
 	const tlsServerName =
-		server.tlsServerName !== undefined ? str(server, "server.tlsServerName", server.tlsServerName) : undefined;
+		server.tlsServerName !== undefined ? str("server.tlsServerName", server.tlsServerName) : undefined;
 
-	const tlsCaFile = server.tlsCaFile !== undefined ? str(server, "server.tlsCaFile", server.tlsCaFile) : undefined;
+	const tlsCaFile = server.tlsCaFile !== undefined ? str("server.tlsCaFile", server.tlsCaFile) : undefined;
 
 	if (tlsCaFile !== undefined && tlsInsecure) {
 		throw new ConfigError("server.tlsCaFile", "set either tlsCaFile (verify) or tlsInsecure (skip) — not both");
 	}
 
 	let auth: AuthConfig | undefined;
-	const authRaw = merged.auth as Json | undefined;
+	const authRaw = isJsonObject(merged.auth) ? merged.auth : undefined;
 
 	if (authRaw !== undefined) {
-		const password = authRaw.password !== undefined ? str(authRaw, "auth.password", authRaw.password) : undefined;
+		const password = authRaw.password !== undefined ? str("auth.password", authRaw.password) : undefined;
 
 		const authPasswordEnv =
-			authRaw.passwordEnv !== undefined ? str(authRaw, "auth.passwordEnv", authRaw.passwordEnv) : undefined;
+			authRaw.passwordEnv !== undefined ? str("auth.passwordEnv", authRaw.passwordEnv) : undefined;
 
 		if ((password !== undefined) === (authPasswordEnv !== undefined)) {
 			throw new ConfigError("auth", "set exactly one of auth.password or auth.passwordEnv");
 		}
 
 		auth = {
-			username: str(authRaw, "auth.username", authRaw.username),
+			username: str("auth.username", authRaw.username),
 			...(password !== undefined ? { password } : { passwordEnv: authPasswordEnv }),
 		};
 	}
@@ -446,8 +487,8 @@ export function loadConfig(opts: {
 	const config: PiIrcConfig = {
 		server: {
 			host,
-			port: int(server, "server.port", server.port ?? DEFAULTS.server.port, 1, 65535),
-			tls: bool(server, "server.tls", server.tls ?? DEFAULTS.server.tls),
+			port: int("server.port", server.port ?? DEFAULTS.server.port, 1, 65535),
+			tls: bool("server.tls", server.tls ?? DEFAULTS.server.tls),
 			passwordEnv,
 			...(tlsInsecure !== undefined ? { tlsInsecure } : {}),
 			...(tlsServerName !== undefined ? { tlsServerName } : {}),
@@ -455,20 +496,15 @@ export function loadConfig(opts: {
 		},
 		...(auth ? { auth } : {}),
 		nick: {
-			template: str(nick, "nick.template", nick.template ?? DEFAULTS.nick.template),
-			maxLen: int(nick, "nick.maxLen", nick.maxLen ?? DEFAULTS.nick.maxLen, 1, 50),
+			template: str("nick.template", nick.template ?? DEFAULTS.nick.template),
+			maxLen: int("nick.maxLen", nick.maxLen ?? DEFAULTS.nick.maxLen, 1, 50),
 		},
 		channels: {
-			projectTemplate: str(
-				channels,
-				"channels.projectTemplate",
-				channels.projectTemplate ?? DEFAULTS.channels.projectTemplate,
-			),
+			projectTemplate: str("channels.projectTemplate", channels.projectTemplate ?? DEFAULTS.channels.projectTemplate),
 			defaults: channelList("channels.defaults", channels.defaults ?? DEFAULTS.channels.defaults),
-			autoCreate: bool(channels, "channels.autoCreate", channels.autoCreate ?? DEFAULTS.channels.autoCreate),
-			topicTemplate: str(channels, "channels.topicTemplate", channels.topicTemplate ?? DEFAULTS.channels.topicTemplate),
+			autoCreate: bool("channels.autoCreate", channels.autoCreate ?? DEFAULTS.channels.autoCreate),
+			topicTemplate: str("channels.topicTemplate", channels.topicTemplate ?? DEFAULTS.channels.topicTemplate),
 			kickRejoinDelayMs: int(
-				channels,
 				"channels.kickRejoinDelayMs",
 				channels.kickRejoinDelayMs ?? DEFAULTS.channels.kickRejoinDelayMs,
 				0,
@@ -482,41 +518,25 @@ export function loadConfig(opts: {
 					: DEFAULTS.capabilities.request,
 		},
 		delivery: {
-			bufferMax: int(delivery, "delivery.bufferMax", delivery.bufferMax ?? DEFAULTS.delivery.bufferMax, 1, 100_000),
-			burst: int(delivery, "delivery.burst", delivery.burst ?? DEFAULTS.delivery.burst, 1, 100),
-			intervalMs: int(
-				delivery,
-				"delivery.intervalMs",
-				delivery.intervalMs ?? DEFAULTS.delivery.intervalMs,
-				100,
-				60_000,
-			),
-			maxQueue: int(delivery, "delivery.maxQueue", delivery.maxQueue ?? DEFAULTS.delivery.maxQueue, 1, 100_000),
+			bufferMax: int("delivery.bufferMax", delivery.bufferMax ?? DEFAULTS.delivery.bufferMax, 1, 100_000),
+			burst: int("delivery.burst", delivery.burst ?? DEFAULTS.delivery.burst, 1, 100),
+			intervalMs: int("delivery.intervalMs", delivery.intervalMs ?? DEFAULTS.delivery.intervalMs, 100, 60_000),
+			maxQueue: int("delivery.maxQueue", delivery.maxQueue ?? DEFAULTS.delivery.maxQueue, 1, 100_000),
 			wakeOnDirectMessage: bool(
-				delivery,
 				"delivery.wakeOnDirectMessage",
 				delivery.wakeOnDirectMessage ?? DEFAULTS.delivery.wakeOnDirectMessage,
 			),
-			chunkLongSends: bool(
-				delivery,
-				"delivery.chunkLongSends",
-				delivery.chunkLongSends ?? DEFAULTS.delivery.chunkLongSends,
-			),
+			chunkLongSends: bool("delivery.chunkLongSends", delivery.chunkLongSends ?? DEFAULTS.delivery.chunkLongSends),
 			wakeAllowNicks:
 				delivery.wakeAllowNicks !== undefined
 					? strList("delivery.wakeAllowNicks", delivery.wakeAllowNicks)
 					: DEFAULTS.delivery.wakeAllowNicks,
-			wakeTrust: (["none", "account", "project"] as const).includes(
-				delivery.wakeTrust as "none" | "account" | "project",
-			)
-				? (delivery.wakeTrust as "none" | "account" | "project")
-				: DEFAULTS.delivery.wakeTrust,
+			wakeTrust: isWakeTrust(delivery.wakeTrust) ? delivery.wakeTrust : DEFAULTS.delivery.wakeTrust,
 		},
 		history: { catchupLimit: historyCatchup },
-		projectSlug:
-			typeof slugOverride === "string" && slugOverride.length > 0
-				? slugOverride.toLowerCase()
-				: projectSlug(path.basename(opts.projectDir ?? path.dirname(opts.globalPath))),
+		projectSlug: isNonEmptyString(slugOverride)
+			? slugOverride.toLowerCase()
+			: projectSlug(path.basename(opts.projectDir ?? path.dirname(opts.globalPath))),
 	};
 
 	if (!CHANNEL_NAME.test(renderChannelName(config.channels.projectTemplate, config.projectSlug))) {

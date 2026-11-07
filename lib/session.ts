@@ -18,9 +18,9 @@ import { renderChannelName } from "./config.ts";
 import type { IdentityContext } from "./identity.ts";
 import { buildRegisterIdentity } from "./identity.ts";
 import { IrcClient, type Transport } from "./irc-client.ts";
-import { IrcSocket } from "./irc-socket.ts";
+import { IrcSocket, type ConnectOptions } from "./irc-socket.ts";
 import { NUMERICS } from "./numerics.ts";
-import type { BufferedMessage, ReadOptions } from "./buffer.ts";
+import type { BufferedMessage, ReadOptions, UnreadCounts } from "./buffer.ts";
 import { MessageBuffer } from "./buffer.ts";
 import type { Peer } from "./roster.ts";
 import { Roster } from "./roster.ts";
@@ -33,6 +33,30 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { AskRegistry, ReplyAssembler, envelopeParts, parseEnvelope, type AskResolution } from "./rpc.ts";
+import { errorMessage } from "./errors.ts";
+
+/** What `status()` reports: identity, connection, channels, unread counts. */
+export interface IrcStatus {
+	nick: string;
+	/** Present only while the server renamed us away from the desired nick. */
+	desiredNick?: string;
+	role: string;
+	project: string;
+	projectChannel: string;
+	connection: string;
+	wakeTrust: "none" | "account" | "project";
+	channels: string[];
+	/** Present only while a reconnect is scheduled. */
+	reconnect?: { attempt: number; nextInMs: number };
+	unread: UnreadCounts;
+}
+
+/** Where a `reply()` went and how many envelope parts it took. */
+export interface ReplyOutcome {
+	id: string;
+	to: string;
+	parts: number;
+}
 
 export interface SessionDeps {
 	/** Injectable for tests: an already-registered client (skips PASS/001). */
@@ -73,15 +97,12 @@ export interface SendResult {
 const BOOT_TIMEOUT_MS = 15_000;
 
 /** Connect arguments shared by the initial connect and every reconnect. */
-function connectOptsFor(config: PiIrcConfig): {
-	host: string;
-	port: number;
-	tls: boolean;
-	timeoutMs: number;
-	rejectUnauthorized?: boolean;
-	serverName?: string;
-	ca?: Buffer;
-} {
+/** A partial injected spec counts as a full one only when it brings its own transport. */
+function isReconnectSpec(spec: Partial<ReconnectSpec> | undefined): spec is ReconnectSpec {
+	return spec !== undefined && spec.transportFactory !== undefined;
+}
+
+function connectOptsFor(config: PiIrcConfig): ConnectOptions {
 	const s = config.server;
 	let ca: Buffer | undefined;
 
@@ -93,7 +114,7 @@ function connectOptsFor(config: PiIrcConfig): {
 		} catch (err) {
 			// Fail closed: a configured CA that cannot be read must stop the
 			// connect, not silently fall back to the default trust store.
-			throw new Error(`server.tlsCaFile unreadable (${path}): ${(err as Error).message}`);
+			throw new Error(`server.tlsCaFile unreadable (${path}): ${errorMessage(err)}`);
 		}
 	}
 
@@ -246,8 +267,8 @@ export class IrcSession extends EventEmitter {
 		// Reconnect policy: real (socket-backed) sessions always get one;
 		// injected test clients only when the fixture provides a factory.
 		const reconnect: ReconnectSpec | null = deps.client
-			? deps.reconnect?.transportFactory
-				? ({ ...deps.reconnect } as ReconnectSpec)
+			? isReconnectSpec(deps.reconnect)
+				? { ...deps.reconnect }
 				: null
 			: { transportFactory: () => new IrcSocket(), password, ...deps.reconnect };
 
@@ -518,7 +539,7 @@ export class IrcSession extends EventEmitter {
 			this.#reconnectAttempt = 0;
 			this.emit("reconnected", { nick, attempt });
 		} catch (err) {
-			this.emit("sessionError", `reconnect attempt ${attempt} failed: ${(err as Error).message}`);
+			this.emit("sessionError", `reconnect attempt ${attempt} failed: ${errorMessage(err)}`);
 			this.#scheduleReconnect();
 		}
 	}
@@ -772,7 +793,9 @@ export class IrcSession extends EventEmitter {
 
 	// ---- Tool surface ----------------------------------------------------
 
-	status(): Record<string, unknown> {
+	status(): IrcStatus {
+		const pending = this.#pendingReconnect();
+
 		return {
 			nick: this.client.realNick ?? this.client.nick,
 			...(this.client.desiredNick !== (this.client.realNick ?? this.client.nick)
@@ -784,7 +807,7 @@ export class IrcSession extends EventEmitter {
 			connection: this.client.state,
 			wakeTrust: this.config.delivery.wakeTrust ?? "account",
 			channels: this.channels.list().map((ch) => ch.name),
-			...(this.#pendingReconnect() ? { reconnect: this.#pendingReconnect() } : {}),
+			...(pending ? { reconnect: pending } : {}),
 			unread: this.buffer.unreadAll(),
 		};
 	}
@@ -892,7 +915,7 @@ export class IrcSession extends EventEmitter {
 	 * Answer an ask another session sent us. One reply per ask id; unknown or
 	 * already-answered ids throw with the pending list spelled out.
 	 */
-	reply(id: string, text: string): { id: string; to: string; parts: number } {
+	reply(id: string, text: string): ReplyOutcome {
 		const pending = this.rpc.pendingInbound().find((a) => a.id === id);
 
 		if (!pending) {

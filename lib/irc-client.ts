@@ -13,6 +13,7 @@ import { parseLine, formatLine, wire, type IrcMessage } from "./wire.ts";
 import { NUMERICS } from "./numerics.ts";
 import { CapNegotiator } from "./caps.ts";
 import { authChunks, saslPlainPayload } from "./sasl.ts";
+import { errorMessage } from "./errors.ts";
 
 export type ClientState = "idle" | "connecting" | "registering" | "registered" | "closed";
 
@@ -274,7 +275,7 @@ export class IrcClient extends EventEmitter {
 		try {
 			msg = parseLine(rawLine);
 		} catch (err) {
-			this.emit("error", { message: `unparseable line: ${rawLine}: ${(err as Error).message}` });
+			this.emit("error", { message: `unparseable line: ${rawLine}: ${errorMessage(err)}` });
 
 			return;
 		}

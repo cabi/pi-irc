@@ -7,15 +7,15 @@
 		}
 	],
 	"rules": {
-		"anti-slop/no-chained-type-assertions": "warn",
-		"anti-slop/no-unnecessary-type-widening": "warn",
+		"anti-slop/no-chained-type-assertions": "error",
+		"anti-slop/no-unnecessary-type-widening": "error",
 		"anti-slop/no-object-parameters": "error",
 		"anti-slop/no-reduce-accumulator-copy": "error",
-		"anti-slop/no-typeof-outside-guards": "warn",
+		"anti-slop/no-typeof-outside-guards": "error",
 		"anti-slop/no-meaningless-unknown-aliases": "error",
 		"anti-slop/no-unsafe-dictionary-values": "error",
 		"anti-slop/no-narrowing-after-widening": "error",
-		"anti-slop/require-type-assertion-justification": "warn",
+		"anti-slop/require-type-assertion-justification": "error",
 		"anti-slop/tests-require-given-when-then": "off",
 		"anti-slop/require-logical-blank-lines": "error"
 	},

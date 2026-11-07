@@ -9,6 +9,9 @@
 
 export type MessageKind = "chan" | "dm" | "notice" | "action" | "system" | "ask" | "reply";
 
+/** Per-conversation pending message counts, keyed by display name. */
+export type UnreadCounts = Record<string, number>;
+
 export interface BufferedMessage {
 	/** Monotonic sequence number across the whole buffer. */
 	seq: number;
@@ -115,7 +118,8 @@ export class MessageBuffer {
 	}
 
 	/** Unread counts per conversation, keyed by display name. */
-	unreadAll(): Record<string, number> {
+
+	unreadAll() {
 		const out: Record<string, number> = {};
 
 		for (const conv of this.convs.values()) {
@@ -186,7 +190,7 @@ export class MessageBuffer {
 	 * Advance the read cursor to the newest buffered message WITHOUT returning
 	 * anything — "I know, clear it". Returns flushed counts per display name.
 	 */
-	mark(conv?: string): Record<string, number> {
+	mark(conv?: string) {
 		const targets = conv ? [this.convs.get(conv.toLowerCase())] : [...this.convs.values()];
 		const out: Record<string, number> = {};
 

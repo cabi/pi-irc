@@ -18,7 +18,7 @@ export interface IrcMessage {
 	/** Uppercased command or numeric as string ("001", "PRIVMSG"). */
 	params: string[];
 	/** IRCv3 message tags, parsed and unescaped ("@time=...;account=x"). */
-	tags?: Record<string, string>;
+	tags?: MessageTags;
 }
 
 const MAX_LINE = 512;
@@ -26,7 +26,10 @@ const MAX_LINE = 512;
 export class WireError extends Error {}
 
 /** Parse and unescape an IRCv3 tags block ("time=..;msg-things=a\\sb"). */
-export function parseTags(raw: string): Record<string, string> {
+/** IRCv3 message tags (`@a=b;c=d`) — raw strings, escapes already decoded. */
+export type MessageTags = Record<string, string>;
+
+export function parseTags(raw: string) {
 	const out: Record<string, string> = {};
 
 	for (const entry of raw.split(";")) {
@@ -61,7 +64,7 @@ export function parseLine(line: string): IrcMessage {
 
 	if (rest.length > MAX_LINE) rest = rest.slice(0, MAX_LINE);
 
-	let tags: Record<string, string> | undefined;
+	let tags: MessageTags | undefined;
 
 	if (rest.startsWith("@")) {
 		const sp = rest.indexOf(" ");
