@@ -342,6 +342,7 @@ export interface WakeOnChannelConfig {
 function parseWakeOnChannel(key: string, value: unknown): WakeOnChannelConfig | undefined {
 	if (value === undefined) return undefined;
 	if (!isJsonObject(value)) throw new ConfigError(key, "expected an object");
+
 	if (!isNonEmptyString(value.capabilities)) {
 		throw new ConfigError(`${key}.capabilities`, "expected a non-empty string describing this agent's speciality");
 	}
@@ -351,7 +352,7 @@ function parseWakeOnChannel(key: string, value: unknown): WakeOnChannelConfig | 
 		channels,
 		capabilities: str(`${key}.capabilities`, value.capabilities),
 		classifier: isNonEmptyString(value.classifier) ? value.classifier : "",
-		confidence: value.confidence === undefined ? 0.5 : int(`${key}.confidence`, value.confidence, 0, 1),
+		confidence: value.confidence === undefined ? 0.5 : float01(`${key}.confidence`, value.confidence),
 		contextLines: value.contextLines === undefined ? 5 : int(`${key}.contextLines`, value.contextLines, 0, 20),
 	};
 }
@@ -364,6 +365,15 @@ function str(key: string, value: unknown): string {
 
 function int(key: string, value: unknown, min: number, max: number): number {
 	if (!isIntInRange(value, min, max)) throw new ConfigError(key, `expected an integer ${min}–${max}`);
+
+	return value;
+}
+
+/** Confidence floors are floats (0–1), unlike the integer bounds elsewhere. */
+function float01(key: string, value: unknown): number {
+	if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+		throw new ConfigError(key, "expected a number 0–1");
+	}
 
 	return value;
 }

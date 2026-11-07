@@ -160,6 +160,21 @@ test("explicit project slug wins over directory name", () => {
 test("wrong values fail loudly with the offending key", () => {
 	const dir = tmpDir();
 
+test("wakeOnChannel: fractional confidence parses, out-of-range floats reject", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", {
+		server: { host: "irc.test" },
+		delivery: { wakeOnChannel: { channels: ["#lounge"], capabilities: "research", confidence: 0.35 } },
+	});
+	const config = loadConfig({ globalPath, projectDir: dir });
+	assert.equal(config.delivery.wakeOnChannel.confidence, 0.35);
+	const bad = writeConfig(dir, "bad.json", {
+		server: { host: "irc.test" },
+		delivery: { wakeOnChannel: { channels: ["#lounge"], capabilities: "research", confidence: 1.2 } },
+	});
+	expectConfigError(() => loadConfig({ globalPath: bad, projectDir: dir }), "delivery.wakeOnChannel.confidence");
+});
+
 	const cases = [
 		[{ server: { host: 5 } }, "server.host"],
 		[{ server: { host: "h", port: 0 } }, "server.port"],
