@@ -203,3 +203,13 @@ test("pending lists both directions", async () => {
 	assert.match(r.content[0].text, /asks you sent \(1\):[\s\S]*id=x9 to pi-sub-b2: branch\?/);
 });
 });
+
+test("mark flushes cursors and reports counts; empty stays quiet", async () => {
+	const s = fakeSession({ mark: (conv) => (conv ? { "#pi-proj": 3 } : { "#pi-proj": 3, carol: 1 }) });
+	const one = await executeIrcOp(ensureOf(s), "mark", { conversation: "#pi-proj" });
+	assert.match(one.content[0].text, /^marked #pi-proj read \(3 messages: #pi-proj\)$/);
+	const all = await executeIrcOp(ensureOf(s), "mark", {});
+	assert.match(all.content[0].text, /^marked all conversations read \(4 messages: #pi-proj, carol\)$/);
+	const empty = await executeIrcOp(ensureOf(fakeSession({ mark: () => ({}) })), "mark", {});
+	assert.equal(empty.content[0].text, "nothing unread to mark");
+});

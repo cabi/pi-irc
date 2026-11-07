@@ -93,3 +93,26 @@ test("since filter and limit are honored", () => {
 	assert.deepEqual(buf.read({ limit: 1 }).map((m) => m.text), ["n2"]);
 	assert.deepEqual(buf.read({ limit: 1 }).map((m) => m.text), ["n3"]);
 });
+
+test("mark flushes cursors without draining: all, one conv, unknown, no-op", () => {
+	const buf = mkbuf();
+	buf.push({ conv: "#a", display: "#a", from: "x", text: "a1" });
+	buf.push({ conv: "#a", display: "#a", from: "x", text: "a2" });
+	buf.push({ conv: "bob", display: "bob", from: "bob", text: "dm1" });
+
+	// one conversation only, case-insensitive
+	const one = buf.mark("#A");
+	assert.deepEqual(one, { "#a": 2 });
+	assert.equal(buf.unread("#a"), 0);
+	assert.equal(buf.unread("bob"), 1);
+
+	// all remaining
+	const all = buf.mark();
+	assert.deepEqual(all, { bob: 1 });
+	assert.equal(buf.unread("bob"), 0);
+
+	// nothing pending → empty map, and messages stay queryable via history()
+	assert.deepEqual(buf.mark(), {});
+	assert.deepEqual(buf.mark("#nope"), {});
+	assert.equal(buf.history("#a").length, 2);
+});

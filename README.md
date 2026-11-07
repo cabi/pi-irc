@@ -72,7 +72,7 @@ Authenticated networks (SASL PLAIN over TLS — Libera-class servers):
 
 ## What the agent sees
 
-One tool, twelve ops (discovery via `irc` with `op: "help"`):
+One tool, thirteen ops (discovery via `irc` with `op: "help"`):
 
 | Op | Does |
 |---|---|
@@ -81,6 +81,7 @@ One tool, twelve ops (discovery via `irc` with `op: "help"`):
 | `roster` | channel members as agent (project, main/sub, session) or human; `away: true` = busy mid-run |
 | `send` | message the project channel (default) or any channel/nick — targets accept `@session-id` prefixes and role selectors (`main`, `sub`) |
 | `read` | unread messages since cursor (`from`/`since`/`channel` filters) |
+| `mark` | flush read cursors without fetching ("seen it") — one conversation or all |
 | `history` | replay recent messages for a channel or DM peer (`draft/chathistory`; `limit`, default `history.catchupLimit`) |
 | `join` / `part` | extra channels; the project channel cannot be parted |
 | `ask` | blocking question to another agent over DM (`[pi-ask <id>]` envelope, `timeout` seconds); accepts the same addressing selectors as `send` |

@@ -140,8 +140,27 @@ export class MessageBuffer {
 		}
 		return result;
 	}
+/**
+ * Advance the read cursor to the newest buffered message WITHOUT returning
+ * anything — "I know, clear it". Returns flushed counts per display name.
+ */
+mark(conv?: string): Record<string, number> {
+	const targets = conv
+		? [this.convs.get(conv.toLowerCase())]
+		: [...this.convs.values()];
+	const out: Record<string, number> = {};
+	for (const c of targets) {
+		if (!c) continue;
+		const last = c.messages.at(-1);
+		if (last && last.seq > c.cursorSeq) {
+			out[c.display] = c.messages.filter((m) => m.seq > c.cursorSeq).length;
+			c.cursorSeq = last.seq;
+		}
+	}
+	return out;
+}
 
-	/** Everything still buffered for a conversation, read or not. */
+/** Everything still buffered for a conversation, read or not. */
 	history(conv: string, limit = this.maxPerConv): BufferedMessage[] {
 		const c = this.convs.get(conv.toLowerCase());
 		if (!c) return [];

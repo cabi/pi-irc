@@ -720,6 +720,11 @@ export class IrcSession extends EventEmitter {
 		return this.buffer.read(opts);
 	}
 
+	/** Flush read cursors without returning content ("I know, clear it"). */
+	mark(conv?: string): Record<string, number> {
+		return this.buffer.mark(conv);
+	}
+
 	/** Serialized CHATHISTORY fetch; never throws, no-op without the cap. */
 	#catchup(target: string, limit: number): Promise<IrcMessage[]> {
 		const run = async (): Promise<IrcMessage[]> => {

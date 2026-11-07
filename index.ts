@@ -151,20 +151,19 @@ export default function (pi: ExtensionAPI) {
 			parameters: Type.Object({
 				op: StringEnum(IRC_OPS, {
 					description:
-					"connect: ensure the link (rarely needed). status: nick/channels/unread. roster: who is here. " +
-					"send: post text (default: project channel). read: fetch unread messages. " +
-				"connect: ensure the link (rarely needed). status: nick/channels/unread. roster: who is here. " +
-					"send: post text (default: project channel). read: fetch unread messages. " +
-					"ask: peer+text correlated question (blocks for reply). reply: id+text answers an ask. " +
-					"pending: open asks both ways. history: target (+limit) fetches stored channel/DM history " +
-					"from the server. join/part: extra channels. help: usage.",
+						"connect: ensure the link (rarely needed). status: nick/channels/unread. roster: who is here. " +
+						"send: post text (default: project channel). read: fetch unread messages. " +
+						"mark: flush read cursors without fetching (target one conversation or all). " +
+						"ask: peer+text correlated question (blocks for reply). reply: id+text answers an ask. " +
+						"pending: open asks both ways. history: target (+limit) fetches stored channel/DM history " +
+						"from the server. join/part: extra channels. help: usage.",
 				}),
 				target: Type.Optional(
 					Type.String({ description: "send: channel or nick (default = project channel); history: the channel or nick to fetch" }),
 				),
 				text: Type.Optional(Type.String({ description: "send: message text" })),
 				conversation: Type.Optional(
-					Type.String({ description: "read: only this channel or nick" }),
+					Type.String({ description: "read: only this channel or nick; mark: flush only this conversation" }),
 				),
 				from: Type.Optional(Type.String({ description: "read: only messages from this nick" })),
 				since: Type.Optional(

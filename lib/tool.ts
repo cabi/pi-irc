@@ -16,6 +16,7 @@ export const IRC_OPS = [
 	"roster",
 	"send",
 	"read",
+	"mark",
 	"ask",
 	"reply",
 	"pending",
@@ -47,7 +48,6 @@ export interface IrcToolParams {
 	peer?: string;
 	/** ask: timeout in seconds (default 600, max 3600). */
 	timeout?: number;
-	/** reply: the ask id to answer (answer goes in `text`). */
 	/** reply: the ask id to answer (answer goes in `text`). */
 	id?: string;
 }
@@ -135,6 +135,14 @@ export async function executeIrcOp(
 				return `${fmtTime(m.ts)}${tag}${m.channel} <${m.from}> ${m.text}`;
 			});
 			return text(lines.join("\n"), { count: msgs.length });
+		}
+		case "mark": {
+			const flushed = session.mark(params.conversation);
+			const names = Object.keys(flushed);
+			if (names.length === 0) return text("nothing unread to mark", { flushed });
+			const total = Object.values(flushed).reduce((a, b) => a + b, 0);
+			const where = params.conversation ? params.conversation : "all conversations";
+			return text(`marked ${where} read (${total} message${total === 1 ? "" : "s"}: ${names.join(", ")})`, { flushed });
 		}
 		case "ask": {
 			if (!params.peer || !params.text?.trim()) {
