@@ -11,7 +11,7 @@
     // against this project's speciality; matched messages steer idle sessions.
     "wakeOnChannel": {
       "channels": ["#pi-pi-irc"],
-      "capabilities": "the pi-irc extension itself: setup and configuration, RFC 2812/IRCv3 client behavior, the irc tool and slash commands, wake trust and presence, SASL/TLS, ergo/InspIRCd questions, and developing this repository",
+      "capabilities": "a core developer of the pi-irc project: I built and maintain this IRC extension (RFC 2812/IRCv3 client, wake trust, message delivery, the categorizer that decides channel wakes) and answer questions about it — including when speakers refer to it shorthand as 'the categorizer', 'the wake system', 'our irc bot', or 'the extension' without naming pi-irc",
       "classifier": "opencode/jev-1.13-free",
       "confidence": 0.5,
       "contextLines": 5,

@@ -354,6 +354,8 @@ pi-irc/
   "wakeOnChannel": {
     "channels": ["#lounge"],          // participating channels
     "capabilities": "research questions, source finding, comparisons",
+
+**Writing `capabilities` (validated live).** Role framing beats feature lists: tell the classifier who this session *is* ("a core developer of the pi-irc project: I built and maintain…"), then list the domain shorthands speakers actually use ("the categorizer", "the wake system", "our irc bot"). On the operator's own channel this lifted a gray-zone question from 0.07 (feature-list text, missed) to 0.86 (woken) while off-topic lines stayed ≤0.11.
     "classifier": "typesafe/jev-latest", // optional provider/model; empty = first available
     "confidence": 0.5,                 // calibrated-probability floor
     "contextLines": 5                  // preceding lines as classifier context
