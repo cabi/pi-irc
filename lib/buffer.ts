@@ -38,7 +38,9 @@ export interface ReadOptions {
 interface Conversation {
 	display: string;
 	messages: BufferedMessage[];
-	cursorSeq: number; // last seq the session has read
+	cursorSeq: number; // contiguous prefix read
+	/** Delivered-but-not-yet-contiguous seqs (filtered reads above the cursor). */
+	delivered: Set<number>;
 }
 
 /** Characters that can legally continue an IRC nick — mention boundaries. */
@@ -76,7 +78,7 @@ export class MessageBuffer {
 		const key = msg.conv.toLowerCase();
 		let conv = this.convs.get(key);
 		if (!conv) {
-			conv = { display: msg.display ?? msg.conv, messages: [], cursorSeq: 0 };
+			conv = { display: msg.display ?? msg.conv, messages: [], cursorSeq: 0, delivered: new Set() };
 			this.convs.set(key, conv);
 		}
 		const entry: BufferedMessage = {
@@ -90,7 +92,10 @@ export class MessageBuffer {
 			mentioned: mentionsNick(msg.text, this.selfNick) && msg.from.toLowerCase() !== this.selfNick.toLowerCase(),
 		};
 		conv.messages.push(entry);
-		if (conv.messages.length > this.maxPerConv) conv.messages.splice(0, conv.messages.length - this.maxPerConv);
+		if (conv.messages.length > this.maxPerConv) {
+			const dropped = conv.messages.splice(0, conv.messages.length - this.maxPerConv);
+			for (const m of dropped) conv.delivered.delete(m.seq); // no dead marks
+		}
 		return entry;
 	}
 
@@ -98,7 +103,7 @@ export class MessageBuffer {
 	unreadAll(): Record<string, number> {
 		const out: Record<string, number> = {};
 		for (const conv of this.convs.values()) {
-			const n = conv.messages.filter((m) => m.seq > conv.cursorSeq).length;
+		const n = conv.messages.filter((m) => m.seq > conv.cursorSeq && !conv.delivered.has(m.seq)).length;
 			if (n > 0) out[conv.display] = n;
 		}
 		return out;
@@ -107,13 +112,13 @@ export class MessageBuffer {
 	unread(conv: string): number {
 		const c = this.convs.get(conv.toLowerCase());
 		if (!c) return 0;
-		return c.messages.filter((m) => m.seq > c.cursorSeq).length;
+	return c.messages.filter((m) => m.seq > c.cursorSeq && !c.delivered.has(m.seq)).length;
 	}
 
 	/**
-	 * Drain unread messages (oldest first) applying filters, and advance
-	 * the cursor past everything returned. An explicit `conv` advances
-	 * only that conversation.
+	 * Drain unread messages (oldest first) applying filters. The cursor
+	 * advances only contiguously past delivered messages; filtered-out or
+	 * limit-cut unread messages stay unread. An explicit `conv` drains
 	 */
 	read(opts: ReadOptions = {}): BufferedMessage[] {
 		const limit = opts.limit ?? 200;
@@ -125,7 +130,8 @@ export class MessageBuffer {
 			if (!conv) continue;
 			const unread = conv.messages.filter(
 				(m) =>
-					m.seq > conv.cursorSeq &&
+				m.seq > conv.cursorSeq &&
+				!conv.delivered.has(m.seq) &&
 					(!opts.from || m.from.toLowerCase() === opts.from.toLowerCase()) &&
 					(!opts.since || m.ts >= opts.since),
 			);
@@ -133,10 +139,18 @@ export class MessageBuffer {
 		}
 		out.sort((a, b) => a.seq - b.seq);
 		const result = out.slice(0, limit);
-		// Advance cursors past everything returned.
-		for (const m of result) {
-			const conv = this.convs.get(m.conv);
-			if (conv && m.seq > conv.cursorSeq) conv.cursorSeq = m.seq;
+		// Mark exactly the delivered messages read; the contiguous prefix
+		// advances the cursor, the rest wait as delivery marks so nothing
+		// skipped can ever be lost and nothing delivered repeats.
+		for (const m of result) this.convs.get(m.conv)?.delivered.add(m.seq);
+		for (const conv of targets) {
+			if (!conv) continue;
+			for (const m of conv.messages) {
+				if (m.seq <= conv.cursorSeq) continue;
+				if (!conv.delivered.has(m.seq)) break; // first undelivered unread blocks
+				conv.cursorSeq = m.seq;
+				conv.delivered.delete(m.seq);
+			}
 		}
 		return result;
 	}
@@ -153,8 +167,9 @@ mark(conv?: string): Record<string, number> {
 		if (!c) continue;
 		const last = c.messages.at(-1);
 		if (last && last.seq > c.cursorSeq) {
-			out[c.display] = c.messages.filter((m) => m.seq > c.cursorSeq).length;
-			c.cursorSeq = last.seq;
+		out[c.display] = c.messages.filter((m) => m.seq > c.cursorSeq && !c.delivered.has(m.seq)).length;
+		c.cursorSeq = last.seq;
+		c.delivered.clear();
 		}
 	}
 	return out;

@@ -45,6 +45,27 @@ test("self-mentions of own nick are not flagged", () => {
 	assert.ok(!buf.history("#demo")[0].mentioned);
 });
 
+test("filtered read never skips non-matching unread below returned ones", () => {
+	const buf = mkbuf(10);
+	buf.push({ conv: "#a", display: "#a", from: "alice", text: "1", ts: 100 });
+	buf.push({ conv: "#a", display: "#a", from: "bob", text: "2", ts: 200 });
+	buf.push({ conv: "#a", display: "#a", from: "alice", text: "3", ts: 300 });
+	// from-filter returns 1 and 3 — bob's 2 sits between them and must
+	// stay unread, not be silently skipped by a cursor jump to 3.
+	const got = buf.read({ from: "alice" });
+	assert.deepEqual(got.map((m) => m.text), ["1", "3"]);
+	assert.equal(buf.unread("#a"), 1, "bob's message is still unread");
+	assert.deepEqual(buf.read().map((m) => m.text), ["2"]);
+
+	// same hazard via since= filter
+	buf.push({ conv: "#a", display: "#a", from: "carol", text: "4", ts: 400 });
+	buf.push({ conv: "#a", display: "#a", from: "alice", text: "5", ts: 500 });
+	const later = buf.read({ since: 450 });
+	assert.deepEqual(later.map((m) => m.text), ["5"]);
+	assert.equal(buf.unread("#a"), 1, "carol's below-threshold message stays unread");
+	assert.deepEqual(buf.read().map((m) => m.text), ["4"]);
+});
+
 test("read drains unread, respects filters, advances cursor", () => {
 	const buf = mkbuf(10);
 	buf.push({ conv: "#a", display: "#a", from: "alice", text: "1", ts: 100 });
@@ -90,6 +111,9 @@ test("since filter and limit are honored", () => {
 	assert.deepEqual(buf.read({ since: 150 }).map((m) => m.text), ["new"]);
 	buf.push({ conv: "#a", display: "#a", from: "x", text: "n2", ts: 300 });
 	buf.push({ conv: "#a", display: "#a", from: "x", text: "n3", ts: 400 });
+	// "old" was below the since threshold and never delivered — it comes
+	// back first now instead of being silently skipped by the cursor.
+	assert.deepEqual(buf.read({ limit: 1 }).map((m) => m.text), ["old"]);
 	assert.deepEqual(buf.read({ limit: 1 }).map((m) => m.text), ["n2"]);
 	assert.deepEqual(buf.read({ limit: 1 }).map((m) => m.text), ["n3"]);
 });
