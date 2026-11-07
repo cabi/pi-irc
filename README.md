@@ -70,6 +70,8 @@ Authenticated networks (SASL PLAIN over TLS — Libera-class servers):
 
 `auth` adds the `sasl` capability automatically and **fails closed**: if the server won't negotiate SASL or the credentials are rejected, the session never registers anonymously. Self-signed internal CAs: `"server": { "tlsInsecure": true }`; SNI override behind proxies: `"tlsServerName": "…"`.
 
+**Outbound pacing** (flood control, admin-owned `delivery` section): a token bucket sends `delivery.burst` messages immediately (default 8), then one per `delivery.intervalMs` (default 1000). Queued chunks are bounded by `delivery.maxQueue` (default 512) — a send beyond the bound fails loudly to the caller instead of growing memory without limit. Long messages chunk at 400 UTF-8 bytes with `(i/n)` part markers; replies to `ask` reassemble exactly.
+
 ## What the agent sees
 
 One tool, thirteen ops (discovery via `irc` with `op: "help"`):
