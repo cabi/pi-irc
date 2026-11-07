@@ -34,7 +34,7 @@ pi -e git:github.com/cabi/pi-irc
 export { default } from "/abs/path/to/pi-irc/index.ts";
 ```
 
-In both cases create `~/.pi/agent/pi-irc.json` (below) — until it exists the
+In both cases create `~/.pi/agent/pi-irc.jsonc` (below) — until it exists the
 extension stays disabled with one info line. `/reload` in a running pi picks
 up edits to the checkout.
 
@@ -42,11 +42,11 @@ up edits to the checkout.
 
 pi-irc ships disabled until a global config exists — one clear log line, no crash. Layered config split by _what a thing is_ (P19): the admin's global file owns the machine's IRC **worlds** — endpoints, credentials, TLS trust — once per server; each project picks a world _by name_ and owns its participation and wake policy:
 
-- `~/.pi/agent/pi-irc.json` — admin-owned: the **`servers` registry** (name → `{ host, port, tls, auth, … }`), `defaultServer`, machine defaults for every section
-- `<project>/.pi/pi-irc.json` — project-owned: `server` (a registry **name** or `"off"`), plus full `channels`, `capabilities`, `delivery` (wake trust and `wakeOnChannel` included), `nick`, `history`, `slug`
+- `~/.pi/agent/pi-irc.jsonc` — admin-owned: the **`servers` registry** (name → `{ host, port, tls, auth, … }`), `defaultServer`, machine defaults for every section
+- `<project>/.pi/pi-irc.jsonc` — project-owned: `server` (a registry **name** or `"off"`), plus full `channels`, `capabilities`, `delivery` (wake trust and `wakeOnChannel` included), `nick`, `history`, `slug`
 - a project can never invent an endpoint or touch credentials: `servers`, `auth`, and a `server` _object_ in a project file are ignored with a warning — only names are honored
 
-Minimal global config — one world, no `defaultServer` needed on single-world machines (see `docs/example.pi-irc.json` for all keys):
+Minimal global config — one world, no `defaultServer` needed on single-world machines (see `docs/example.pi-irc.jsonc` for all keys):
 
 ```jsonc
 {
@@ -59,7 +59,7 @@ Minimal global config — one world, no `defaultServer` needed on single-world m
 Many worlds — three projects on `home` (the default), one on `libera`, one not on IRC at all:
 
 ```jsonc
-// ~/.pi/agent/pi-irc.json
+// ~/.pi/agent/pi-irc.jsonc
 {
 	"servers": {
 		"home":   { "host": "irc.lan", "port": 6697, "tls": true, "auth": { "username": "pi", "passwordEnv": "PI_IRC_SASL_PASSWORD" } },
@@ -67,7 +67,7 @@ Many worlds — three projects on `home` (the default), one on `libera`, one not
 	},
 	"defaultServer": "home"
 }
-// <project>/.pi/pi-irc.json — pick a world…
+// <project>/.pi/pi-irc.jsonc — pick a world…
 { "server": "libera" }
 // …or stay off IRC entirely
 { "server": "off" }
@@ -126,7 +126,7 @@ channel talk is _its_ business — each session judges for itself against the
 capabilities you give it; there is no central router:
 
 ```jsonc
-// .pi/pi-irc.json (per project)
+// .pi/pi-irc.jsonc (per project)
 "delivery": {
   "wakeOnChannel": {
     "channels": ["#lounge"],

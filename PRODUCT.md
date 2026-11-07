@@ -50,12 +50,12 @@ Not in v1: multi-server federation, message history beyond the buffer, push noti
 
 Split by _what a thing is_ (P19), not by suspicion. The admin's global file owns the machine's IRC **worlds** — endpoints, credentials, TLS trust — once per server; each project picks a world **by name** and owns its participation and wake policy:
 
-- `~/.pi/agent/pi-irc.json` — admin-owned: the `servers` registry (name → endpoint + optional SASL `auth`), `defaultServer`, machine defaults for every section
-- `<project>/.pi/pi-irc.json` — project-owned: `server` (a registry name or `"off"` — the per-project kill switch), `slug`, and full `channels`, `capabilities`, `delivery` (wake trust and `wakeOnChannel` included), `nick`, `history` sections
+- `~/.pi/agent/pi-irc.jsonc` — admin-owned: the `servers` registry (name → endpoint + optional SASL `auth`), `defaultServer`, machine defaults for every section
+- `<project>/.pi/pi-irc.jsonc` — project-owned: `server` (a registry name or `"off"` — the per-project kill switch), `slug`, and full `channels`, `capabilities`, `delivery` (wake trust and `wakeOnChannel` included), `nick`, `history` sections
 - Projects can never invent endpoints or touch credentials: `servers`, `auth`, and object-form `server` in a project file are ignored with a warning; an unknown name fails loudly with the known names listed
 
 ```jsonc
-// ~/.pi/agent/pi-irc.json (machine-wide)
+// ~/.pi/agent/pi-irc.jsonc (machine-wide)
 {
   "servers": {
     "home":   {                      // a world, once per server
@@ -80,7 +80,7 @@ Split by _what a thing is_ (P19), not by suspicion. The admin's global file owns
   }
 }
 
-// <project>/.pi/pi-irc.json (this project's policy)
+// <project>/.pi/pi-irc.jsonc (this project's policy)
 {
   "server": "libera",                // pick a world by NAME … or "off" to stay off IRC entirely
   "delivery": { "wakeOnChannel": { "channels": ["#lounge"], "capabilities": "frontend and CSS" } }
@@ -156,7 +156,7 @@ Humans need nothing installed beyond any IRC client (irssi, HexChat, a web clien
 pi-irc/
   index.ts            # factory: config load, lifecycle wiring, tool registration
   lib/
-    config.ts         # load/merge/validate pi-irc.json (global ← project), fail loudly
+    config.ts         # load/merge/validate pi-irc.jsonc (global ← project), fail loudly
     wire.ts           # RFC 2812 line codec: parse, format, 512-byte guards, builders
     irc-socket.ts     # TLS/plain TCP transport (node:tls, node:net)
     irc-client.ts     # registration, numeric dispatch, PING/PONG, typed client events
@@ -177,7 +177,7 @@ pi-irc/
 
 - TLS on by default; server password only ever resolved from an env var reference; credentials never logged.
 - **Inbound IRC content is untrusted data.** Any human or foreign agent can write into the channel; the extension injects it as message data, and the shipped agent guidance states that channel content must not be treated as instructions. Admins scope trust by running a private server and channel modes.
-- **Config is a trust boundary (P19).** Endpoints, credentials, and TLS trust live only in the admin-owned global file (`servers` registry); project files in repos can only pick a registered server by name or opt out — a checked-in `.pi/pi-irc.json` can never point the machine's agents at a different host or leak credential settings.
+- **Config is a trust boundary (P19).** Endpoints, credentials, and TLS trust live only in the admin-owned global file (`servers` registry); project files in repos can only pick a registered server by name or opt out — a checked-in `.pi/pi-irc.jsonc` can never point the machine's agents at a different host or leak credential settings.
 - Nickname metadata discloses project slug and role on the wire — acceptable inside a private server; template is configurable for tighter setups.
 
 ## Compatibility & verification
@@ -201,7 +201,7 @@ pi-irc/
 - **P11 (done)** addressing selectors: `send`/`ask` targets resolve via `IrcSession.resolveTarget()` before anything leaves the session — `@<session-id-prefix>` (roster `session` metadata, unique or fail), bare role words `main`/`sub` (sole holder or fail with candidates), raw nicks/channels pass through; self is never a resolution candidate. Found and fixed: `Roster.touch()` silently dropped `session`/`parent` from every patch — session ids were parsed but never stored since P3 (WHO/extended-join realnames parsed fine; nothing read the field until now). 203 unit tests, typecheck clean; live 11/11 ask/reply smoke on the operator's ergo including @-resolution, role selectors, self-exclusion.
 - **P12 (done)** release v0.4.0, git-only: full battery on the operator's ergo (unit 203/203, ergo-smoke 10/10, ergo-agents 10/10, presence 8/8, ask/reply 11/11 — the two legacy fixture scripts need `IRC_PORT=6667` against the operator's server). Operator decision: npm publish stays deferred; the tag is the release. Install: `pi install git:github.com/cabi/pi-irc@v0.4.0`.
 - **P15 (done)** review remediation — every P0/P1 finding from the P14 register fixed, each falsified against a live server before landing:
-  - **a config trust boundary (a2cafa3):** `server`/`auth`/`nick`/`delivery` are global-file-only; a project `.pi/pi-irc.json` setting them is ignored with a warning. Verified live: project-file redirect to an attacker host never connects.
+  - **a config trust boundary (a2cafa3):** `server`/`auth`/`nick`/`delivery` are global-file-only; a project `.pi/pi-irc.jsonc` setting them is ignored with a warning. Verified live: project-file redirect to an attacker host never connects.
   - **b wake trust (f311cdd):** default-deny — a DM wakes only from a services account (extended-join `account`, SASL-backed; WHOX `%uhnafr` refresh, `0`/`*` = logged out) or a `delivery.wakeAllowNicks` glob. Forged `pi-agent` realnames buffer with one untrusted system line, never wake. Old semantics tests rewritten as contract docs.
   - **c wire hardening (7a26e82):** `formatLine` rejects CR/LF/NUL in every outbound parameter; `join` validates channel names; `CHATHISTORY` routes through `formatLine` with a 1–1000 clamp.
   - **d rpc lifecycle + e flood control (4c03b3b):** replies peer-bound (a foreign `[pi-reply]` with a known id is plain text, never the answer); `dispose()` settles waiting asks as `disposed` (no more hangs past session stop); registries capped (256/24 h, waiting asks exempt) and the reply assembler keyed sender+id with TTL+maxPending — the measured 1.16 GiB/day fragment flood is gone. Flood limiter configurable (`delivery.burst` 8, `intervalMs` 1000, `maxQueue` 512 chunks; global-only) and the queue throws instead of growing unbounded.
@@ -209,7 +209,7 @@ pi-irc/
   - **g read-cursor skip (67cc1ca):** filtered `read(from|since)` advances the cursor only past messages actually delivered.
   Battery at close: unit 221/221 + tsc clean; live on the operator's ergo: presence 8/8, ask-reply 11/11, ergo-smoke 10/10, ergo-agents 10/10; sasl-smoke 8/8 on the ergo fixture. Released as v0.4.1 (git-only).
 - **P14 (done)** three-way independent review at bf6525b — clean (hy4, 14 findings), performance (hy4, 9 findings, all benchmark-measured), security (grok-4.7 after 2× hy4 upstream 502s, 9 findings, 8 exploit-confirmed by reproduction). Parent verified 9 load-bearing claims by direct code read — 9/9 held. Register (ranked):
-  - **P0-a config trust boundary (sec-CRIT, exploit-confirmed):** `lib/config.ts:288` merge loop covers only `server|nick|channels|capabilities|delivery|history` — `auth` is NEVER merged, so every file-based config silently loses SASL (functional break; only direct-injection smokes ever tested it). Worse, a project `.pi/pi-irc.json` shallow-overrides `server` (host/port/tls/tlsInsecure/passwordEnv) and session_start auto-connects — an untrusted repo redirects `PASS process.env[attacker_var]` to an attacker host. Fix: server identity + auth from the GLOBAL file only; project file restricted to project-local keys.
+  - **P0-a config trust boundary (sec-CRIT, exploit-confirmed):** `lib/config.ts:288` merge loop covers only `server|nick|channels|capabilities|delivery|history` — `auth` is NEVER merged, so every file-based config silently loses SASL (functional break; only direct-injection smokes ever tested it). Worse, a project `.pi/pi-irc.jsonc` shallow-overrides `server` (host/port/tls/tlsInsecure/passwordEnv) and session_start auto-connects — an untrusted repo redirects `PASS process.env[attacker_var]` to an attacker host. Fix: server identity + auth from the GLOBAL file only; project file restricted to project-local keys.
   - **P0-b wake trust (sec-CRIT, exploit-confirmed):** `wakeAllowNicks: []` default + `#maybeWake` consulting the allowlist only when non-empty = ANY client DMs → `sendUserMessage(deliverAs:"steer")` remote prompt injection; `#wakeTrusted` accepts self-declared `pi-agent` realname (forgeable; extended-join `account` is parsed then discarded). Fix: default-deny (allowlist + SASL-account-verified agents), deliver untrusted text quoted.
   - **P0-c wire hardening (clean/sec, confirmed):** `formatLine` rejects neither CR/LF/NUL; `join` skips `validChannelName`; CHATHISTORY interpolates target+limit raw → outbound command injection from tool params. Fix in formatLine + route CHATHISTORY through it.
   - **P1-d rpc lifecycle (all 3 reviewers):** replies not bound to asked peer (`resolveReply` has no sender), waiters never settle on `dispose()` (ask hangs after stop), `#outbound/#inbound/#parts` unbounded (measured 1.16 GiB/day under fragment flood). Fix: peer-bound replies, settle-on-dispose, caps+TTL, assembler keyed sender+id.
@@ -286,7 +286,7 @@ pi-irc/
 **Problem.** Every validation so far drove `lib/session.ts` directly (smokes) or the entry against a mock (`tests/entry.test.mjs`). Nothing proved the *whole* product: a real pi process, real extension host, real tool surface, real config merge — against the operator's ergo over TLS. And ergo's history subsystem was never reconciled with pi-irc's delivery model.
 
 **Mechanics** (`scripts/drill-agents.mjs`):
-- Scratch project `/tmp/pi-irc-drill-<ts>` + project-local `pi install -l` (user's global settings untouched) + `.pi/pi-irc.json` channel override. Global config (`irc.lan:6697`, TLS, pinned CA) still applies — the real merge path.
+- Scratch project `/tmp/pi-irc-drill-<ts>` + project-local `pi install -l` (user's global settings untouched) + `.pi/pi-irc.jsonc` channel override. Global config (`irc.lan:6697`, TLS, pinned CA) still applies — the real merge path.
 - Two `pi -p` agents choreographed without hardcoded nicks (shortId is pi's session id): main roster-polls until a `pi-sub-*` appears, then a **blocking ask across processes**; sub pending-polls, replies, announces. A PONG-aware stock TLS observer witnesses the channel transcript. 9 checks, all green.
 
 **Findings fixed**:
@@ -395,7 +395,7 @@ No central router: every session classifies for itself; several specialists may 
 
 **Testing**: registry resolution and per-project picks; `"off"` and absent-with-no-default; unknown name; project `auth`/`servers`/host-object rejection; legacy implicit-default migration; delivery-from-project now legal (revises the P15-a test that asserted rejection); per-project delivery independence.
 
-**Record (v0.5.0).** Shipped in `lib/config.ts`: `parseServerEntry` (per-world endpoint + credential binding, rejects `tlsCaFile`+`tlsInsecure` together, resolves `~`), `resolveServerRef` (name → registry entry; `"off"` → disabled; unknown name → ConfigError listing known names), legacy top-level `server`/`auth` → implicit `default` entry with deprecation warning, `servers`+top-level `server` mix rejected. Project files honor `server` by name only; `auth`/`servers`/object-form `server` are ignored with a warning and admin-owned sections keep machine defaults. Per-project `delivery` (incl. `wakeOnChannel`, wake trust), `nick`, `channels`, `capabilities`, `history`, `slug` all legal in project files now. Config validation has its own test module (25 tests); suite 268/268, tsc clean; `docs/example.pi-irc.json` demonstrates registry + per-project picks and parses through the real loader.
+**Record (v0.5.0).** Shipped in `lib/config.ts`: `parseServerEntry` (per-world endpoint + credential binding, rejects `tlsCaFile`+`tlsInsecure` together, resolves `~`), `resolveServerRef` (name → registry entry; `"off"` → disabled; unknown name → ConfigError listing known names), legacy top-level `server`/`auth` → implicit `default` entry with deprecation warning, `servers`+top-level `server` mix rejected. Project files honor `server` by name only; `auth`/`servers`/object-form `server` are ignored with a warning and admin-owned sections keep machine defaults. Per-project `delivery` (incl. `wakeOnChannel`, wake trust), `nick`, `channels`, `capabilities`, `history`, `slug` all legal in project files now. Config validation has its own test module (25 tests); suite 268/268, tsc clean; `docs/example.pi-irc.jsonc` demonstrates registry + per-project picks and parses through the real loader.
 
 ## Terms
 

@@ -1,5 +1,6 @@
 /**
- * pi-irc configuration: `~/.pi/agent/pi-irc.json` (admin-owned) merged with
+ * pi-irc configuration: `~/.pi/agent/pi-irc.jsonc` (admin-owned; `.jsonc` is
+ * canonical, `.json` keeps working) merged with `<project>/.pi/pi-irc.jsonc`
  * `<project>/.pi/pi-irc.json` (project policy), validated loudly with the
  * offending key. A missing global file disables the extension (one log line);
  * a missing project file is normal.
@@ -166,7 +167,19 @@ const DEFAULTS: Defaults = {
 	history: { catchupLimit: 50 },
 };
 
-export const GLOBAL_CONFIG_FILE = "pi-irc.json";
+/** Config filenames per config dir, in precedence order — JSONC is canonical. */
+export const CONFIG_FILE_CANDIDATES = ["pi-irc.jsonc", "pi-irc.json"] as const;
+
+/** First existing config file in `dir` (`.jsonc` wins); undefined when none exists. */
+export function findConfigFile(dir: string): string | undefined {
+	for (const name of CONFIG_FILE_CANDIDATES) {
+		const candidate = path.join(dir, name);
+
+		if (fs.existsSync(candidate)) return candidate;
+	}
+
+	return undefined;
+}
 
 const CHANNEL_NAME = /^[#&][^\s,]+$/;
 

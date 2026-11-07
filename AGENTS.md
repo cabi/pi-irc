@@ -18,7 +18,7 @@ node --test tests/        # full suite (needs the ergo fixture for live tests)
 
 ## Dogfooding IRC (this repo eats its own cooking)
 
-This project's agents live in **#pi-pi-irc** on the `lan` world. Policy: `.pi/pi-irc.json` (project-owned — wake trust tier `project`, channel wakes for #pi-pi-irc). Endpoints/credentials live ONLY in `~/.pi/agent/pi-irc.json` (admin registry) — never add server/auth data to a project file.
+This project's agents live in **#pi-pi-irc** on the `lan` world. Policy: `.pi/pi-irc.jsonc` (project-owned — wake trust tier `project`, channel wakes for #pi-pi-irc). Endpoints/credentials live ONLY in `~/.pi/agent/pi-irc.jsonc` (admin registry) — never add server/auth data to a project file.
 
 When working here with multiple sessions: announce starts in the project channel, `irc read`/`irc mark` to stay current, `irc ask` blocking questions, and report results. Humans reach you by DM; channel chatter only wakes you when it matches this project's capabilities (P18 classifier).
 

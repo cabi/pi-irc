@@ -11,7 +11,7 @@ import { Type } from "typebox";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as os from "node:os";
 import * as path from "node:path";
-import { loadConfig } from "./lib/config.ts";
+import { findConfigFile, loadConfig } from "./lib/config.ts";
 import type { IdentityContext } from "./lib/identity.ts";
 import { IrcSession, type ChannelClassifier } from "./lib/session.ts";
 import { IRC_SUBCOMMANDS, runIrcCommand } from "./lib/commands.ts";
@@ -19,8 +19,12 @@ import { executeIrcOp, IRC_OPS, type IrcToolParams } from "./lib/tool.ts";
 import { errorMessage } from "./lib/errors.ts";
 
 /** Where the admin keeps the global config (PRODUCT.md "Configuration"). */
+/** Where the admin keeps the global config (PRODUCT.md "Configuration").
+ * `.jsonc` is canonical; `.json` keeps working for configs predating it. */
 function globalConfigPath(): string {
-	return path.join(os.homedir(), ".pi", "agent", "pi-irc.json");
+	return (
+		findConfigFile(path.join(os.homedir(), ".pi", "agent")) ?? path.join(os.homedir(), ".pi", "agent", "pi-irc.jsonc")
+	);
 }
 
 /**
@@ -143,14 +147,14 @@ export default function (pi: ExtensionAPI) {
 	const config = loadConfig({
 		globalPath: globalConfigPath(),
 		// Project overrides live next to the codebase they configure.
-		projectPath: path.join(process.cwd(), ".pi", "pi-irc.json"),
+		projectPath: findConfigFile(path.join(process.cwd(), ".pi")),
 		projectDir: process.cwd(),
 	});
 
 	if (!config) {
 		// Absent config = deliberately disabled; stay silent but visible.
 		pi.on("session_start", (_event, ctx) => {
-			ctx.ui.notify("pi-irc: no ~/.pi/agent/pi-irc.json — extension disabled", "info");
+			ctx.ui.notify("pi-irc: no ~/.pi/agent/pi-irc.json(c) — extension disabled", "info");
 		});
 
 		return;

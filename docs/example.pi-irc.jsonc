@@ -1,6 +1,6 @@
 {
 	// The machine's IRC worlds, once per server (admin-owned). Projects pick
-	// one BY NAME via their .pi/pi-irc.json — a repo can never invent an
+	// one BY NAME via their .pi/pi-irc.jsonc — a repo can never invent an
 	// endpoint or touch credentials.
 	"servers": {
 		"home": {
@@ -12,14 +12,14 @@
 			// "tlsInsecure": false,                          // or skip verification entirely (mutually exclusive with tlsCaFile)
 			"auth": {
 				"username": "pi-agent",
-				"passwordEnv": "PI_IRC_SASL_PASSWORD"
-			}
+				"passwordEnv": "PI_IRC_SASL_PASSWORD",
+			},
 		},
 		"libera": {
 			"host": "irc.libera.chat",
 			"port": 6697,
-			"tls": true
-		}
+			"tls": true,
+		},
 	},
 	// Which world projects land in when their own file says nothing.
 	// Optional when the registry has a single entry.
@@ -29,17 +29,17 @@
 	// project (except servers/auth — those are admin-owned, always).
 	"nick": {
 		"template": "pi-{shortId}",
-		"maxLen": 30
+		"maxLen": 30,
 	},
 	"channels": {
 		"projectTemplate": "#pi-{slug}",
 		"defaults": [],
 		"autoCreate": true,
 		"topicTemplate": "pi project {slug} — created {date}",
-		"kickRejoinDelayMs": 3000
+		"kickRejoinDelayMs": 3000,
 	},
 	"capabilities": {
-		"request": ["extended-join", "server-time", "away-notify"]
+		"request": ["extended-join", "server-time", "away-notify"],
 	},
 	"delivery": {
 		"bufferMax": 500,
@@ -49,7 +49,7 @@
 		"chunkLongSends": true,
 		"burst": 8,
 		"intervalMs": 1000,
-		"maxQueue": 512
+		"maxQueue": 512,
 		// "wakeOnChannel": {           // P18: per-agent channel wakes — usually per project:
 		// 	"channels": ["#lounge"],
 		// 	"capabilities": "research, sources, summaries",
@@ -59,11 +59,11 @@
 		// }
 	},
 	"history": {
-		"catchupLimit": 50
-	}
+		"catchupLimit": 50,
+	},
 }
 
-// <project>/.pi/pi-irc.json — project-owned participation and policy:
+// <project>/.pi/pi-irc.jsonc — project-owned participation and policy:
 // {
 // 	"server": "libera",            // a NAME from the registry above …
 // 	// "server": "off",            // … or no IRC for this project

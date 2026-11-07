@@ -7,7 +7,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { loadViaPi, repoFile } from "./helpers.mjs";
 
-const { loadConfig, projectSlug, renderChannelName, ConfigError } = await loadViaPi(repoFile("lib", "config.ts"));
+const { loadConfig, findConfigFile, projectSlug, renderChannelName, ConfigError } = await loadViaPi(
+	repoFile("lib", "config.ts"),
+);
 
 function tmpDir() {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "pi-irc-cfg-"));
@@ -37,6 +39,26 @@ function expectConfigError(fn, key) {
 test("missing global config disables the extension (null)", () => {
 	const dir = tmpDir();
 	assert.equal(loadConfig({ globalPath: path.join(dir, "pi-irc.json") }), null);
+});
+
+test("findConfigFile prefers .jsonc over .json and finds legacy .json", () => {
+	const dir = tmpDir();
+	assert.equal(findConfigFile(dir), undefined, "empty dir → no config");
+	fs.writeFileSync(path.join(dir, "pi-irc.json"), "{}");
+	assert.equal(path.basename(findConfigFile(dir)), "pi-irc.json", "legacy name still discovered");
+	fs.writeFileSync(path.join(dir, "pi-irc.jsonc"), "// comment\n{}");
+	assert.equal(path.basename(findConfigFile(dir)), "pi-irc.jsonc", ".jsonc wins when both exist");
+});
+
+test("project config named .pi/pi-irc.jsonc loads through the real reader", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", { servers: { home: { host: "irc.test" } } });
+	const projectPath = path.join(dir, "p/.pi/pi-irc.jsonc");
+	fs.mkdirSync(path.dirname(projectPath), { recursive: true });
+	fs.writeFileSync(projectPath, `// project policy — comments are legal\n{ "slug": "jsonc-project", }`);
+
+	const cfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "p") });
+	assert.equal(cfg.projectSlug, "jsonc-project");
 });
 
 test("project server object is ignored — only registry names are honored", () => {
