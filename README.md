@@ -91,7 +91,7 @@ One tool, thirteen ops (discovery via `irc` with `op: "help"`):
 | `pending`       | open asks in both directions                                                                                                              |
 | `help`          | op reference with current context                                                                                                         |
 
-By the time the agent may speak, it is connected, registered, and joined — with roster and buffers pre-prepared. **Addressing**: `send`/`ask` targets resolve before leaving the session — `@<session-id-prefix>` picks one agent by its session id (`@b1f2` → `pi-sub-b1f2…`), the bare words `main`/`sub` pick the _sole_ agent in that role (ambiguity fails with the candidate list), and anything else passes through as a raw nick or channel. Resolution uses live roster metadata, so it survives renames and reconnects. Direct messages wake an idle session (throttled); channel chatter never does. While the agent is mid-run it marks itself `AWAY :busy since hh:mm` and returns when settled, so the roster's busy flag is live. Wake trust is **default-deny and tiered** (`delivery.wakeTrust`, shown by `status`): `account` (default) — any peer holding a services account (extended-join — the one IRC identity that costs a password to forge) wakes the session; `project` — additionally requires agent metadata, our project slug, and current membership in the project channel; `none` — allowlist only. `delivery.wakeAllowNicks` globs (e.g. `["carsten", "pi-*"]`) apply in every tier; self-declared agent metadata alone never wakes in any tier. Everyone else's DMs still buffer verbatim with one system line naming the tier that blocked them. On a server without NickServ/SASL, add your agents' and humans' nick globs to `wakeAllowNicks` or set `wakeTrust: "none"`. The link self-heals: reconnect with backoff rejoins every channel, and a kick from a channel re-joins after `channels.kickRejoinDelayMs` (default 3 s, `0` stays out) with one system line in the buffer so the agent sees why.
+By the time the agent may speak, it is connected, registered, and joined — with roster and buffers pre-prepared. **Addressing**: `send`/`ask` targets resolve before leaving the session — `@<session-id-prefix>` picks one agent by its session id (`@b1f2` → `pi-sub-b1f2…`), the bare words `main`/`sub` pick the _sole_ agent in that role (ambiguity fails with the candidate list), and anything else passes through as a raw nick or channel. Resolution uses live roster metadata, so it survives renames and reconnects. Direct messages wake an idle session (throttled); channel chatter stays passive unless you opt a session into channel wakes (`delivery.wakeOnChannel` — see Humans below). While the agent is mid-run it marks itself `AWAY :busy since hh:mm` and returns when settled, so the roster's busy flag is live. Wake trust is **default-deny and tiered** (`delivery.wakeTrust`, shown by `status`): `account` (default) — any peer holding a services account (extended-join — the one IRC identity that costs a password to forge) wakes the session; `project` — additionally requires agent metadata, our project slug, and current membership in the project channel; `none` — allowlist only. `delivery.wakeAllowNicks` globs (e.g. `["carsten", "pi-*"]`) apply in every tier; self-declared agent metadata alone never wakes in any tier. Everyone else's DMs still buffer verbatim with one system line naming the tier that blocked them. On a server without NickServ/SASL, add your agents' and humans' nick globs to `wakeAllowNicks` or set `wakeTrust: "none"`. The link self-heals: reconnect with backoff rejoins every channel, and a kick from a channel re-joins after `channels.kickRejoinDelayMs` (default 3 s, `0` stays out) with one system line in the buffer so the agent sees why.
 
 ## Two buses: pi-intercom vs pi-irc
 
@@ -109,6 +109,33 @@ Inside pi there is also a slash command that rides the same session:
 /irc send <#channel|nick> <text>
 /irc help
 ```
+
+### Channel wakes: talk to specialists in the room
+
+By default channel chatter is passive. Opt a session in and it wakes when
+channel talk is *its* business — each session judges for itself against the
+capabilities you give it; there is no central router:
+
+```jsonc
+// .pi/pi-irc.json (per project)
+"delivery": {
+  "wakeOnChannel": {
+    "channels": ["#lounge"],
+    "capabilities": "research questions, finding sources, comparing options",
+    "classifier": "typesafe/jev-latest",  // optional; any configured Jev-class model
+    "confidence": 0.5
+  }
+}
+```
+
+Order of checks: the sender must pass the same wake trust as a DM (tier or
+`wakeAllowNicks` — an untrusted nick cannot wake anyone, even by
+mentioning); naming the agent's nick wakes it deterministically; anything
+else is one cheap classifier call (a Jev-class decision model through your
+already-configured pi providers — token-light, no keys here) returning a
+calibrated probability. Below the floor it sleeps on; errors never wake.
+Run several specialists side by side with different `capabilities` — say
+"can someone research X" in the channel and only the matching one stirs.
 
 ## History
 

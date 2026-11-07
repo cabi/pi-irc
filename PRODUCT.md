@@ -1,6 +1,6 @@
 # pi-irc — IRC as the communication bus for pi agents and humans
 
-**Status:** v0.4.2 — P1–P16 shipped: RFC 2812 client (reconnect, IRCv3 caps, SASL PLAIN, TLS), session bootstrap, `irc` tool with ask/reply RPC, presence, CHATHISTORY catch-up; three-way reviewed (P14) and every register finding remediated; validated live against ergo and InspIRCd · **Repo:** `~/Projects/pi-extensions/pi-irc` · **Related:** `pi-intercom` (same-machine session messaging — pi-irc is the same need on an open protocol, with humans and remote machines in the loop)
+**Status:** v0.4.3 — P1–P18 shipped: RFC 2812 client (reconnect, IRCv3 caps, SASL PLAIN, TLS), session bootstrap, `irc` tool with ask/reply RPC, presence, CHATHISTORY catch-up; three-way reviewed (P14) and every register finding remediated; validated live against ergo and InspIRCd · **Repo:** `~/Projects/pi-extensions/pi-irc` · **Related:** `pi-intercom` (same-machine session messaging — pi-irc is the same need on an open protocol, with humans and remote machines in the loop)
 
 ## Division of labor with pi-intercom
 
@@ -222,6 +222,7 @@ pi-irc/
   - Docs drift: README verified current for v0.4.1 keys (flood control, wake default-deny, `tlsCaFile`); misleading `{short}` templates in tests renamed to `{shortId}`; the tool.test.mjs nesting/help complaints were stale — the file is flat and fake-backed.
   - Battery at close: unit 227/227 + tsc clean.
 - **P17 (done)** tiered wake trust, spec in the P17 section below: `delivery.wakeTrust` = `account` (default; P15-b semantics) | `project` (account + agent metadata + our project + project-channel membership) | `none` (allowlist only); allowlist globs apply at every tier; `status()` reports the tier; buffered-DM system lines name the tier that blocked them. Live drill on the operator's ergo: `scripts/wake-tier-smoke.mjs` 8/8 (same-project wake, foreign-project/anonymous/stranger buffered with tier-named system lines, allowlist escape hatch at both strict tiers). The drill surfaced a pre-existing NaN pacer: `DeliveryQueue` typed `Required<DeliveryOptions>` but accepted partial opts — raw configs (smokes, embedders) produced a 1 ms busy timer; the constructor now merges defaults per field (231/231 + tsc clean).
+- **P18 (done)** `delivery.wakeOnChannel` — per-agent channel wakes: humans speak in a channel, the *matching* specialist wakes. Each session judges chatter against **its own** `capabilities` string; there is no central routing brain. Gate order is strict and deterministic-first: config scope → own-line skip → sender trust (P17 tiers; an untrusted sender cannot wake even by mentioning) → quiet window → nick mention (deterministic override, no model call) | classifier judgment. The classifier is a pluggable interface riding **pi's model registry** (`ctx.modelRegistry.classify`) — Jev-class "System One" decision models (TypeSafe/OpenRouter/OpenCode/Cloudflare…) through the user's already-configured providers; pi-irc owns no keys and no HTTP; confidence threshold default 0.5; **fail-closed**: lookup errors, `stopReason !== stop`, and sub-threshold confidence never wake. `MessageBuffer.recent()` provides read-only context without touching cursors. Validated: 16 new unit cases (gates, threshold boundary, fail-closed, mention-skip, untrusted-skip, context passing, quiet window) and a live two-specialist drill on the operator's ergo (`scripts/wake-channel-smoke.mjs` 5/5: relevant line wakes only the matching specialist, mention wakes deterministically without the classifier, stranger keywords wake nobody, system lines name the trigger). 247/247 + tsc clean. Gateway decision recorded as ADR-0005 (parked; see `docs/decisions/0005-intercom-irc-gateway-parked.md`).
 - **Field note (2026-11-07, worker comms-preference experiment):** two channel-neutral worker subagents (same cwd, both auto-connected to `#pi-pi-irc` with busy presence and a live 433 suffix on the second) were told to ask their supervisor one question and report back, mechanism unspecified. Both picked `intercom` for ask *and* report, first try; neither sent a single IRC message despite being registered. Takeaways: on one machine the purpose-built bus wins on friction and wake reliability (8 ms delivery vs IRC's default-deny wake trust); pi-irc's agent⇄agent lane is the cross-machine / human-inclusive case. If in-project IRC should compete: project-peer wake trust (account-verified agents in the project channel auto-allowlisted) and supervisor-nick hints in spawn prompts. Also surfaced: subagent sessions register as role `main` (role detection can't distinguish child sessions), and a stale v0.4.1 status line — fixed in this commit.
 - **Two-plane drill (2026-11-07, follow-up):** with the division stated up front, a worker ran both planes correctly in one task — supervisor coordination entirely on intercom (ask for parameters, send final report), a simulated stock-client human (`hank`, raw RFC 2812, anonymous, no agent metadata → classified human) delivering a mid-task redirection over IRC in a rendezvous channel, and the deliverable posted back to the channel for human/remote readers. Verified end-to-end in 1 m 59 s. Side finding: the ephemeral rendezvous channel vanished with its history when the last member left (unregistered ergo channel) — durable gateways need the one-time ChanServ REGISTER.
 
@@ -338,7 +339,40 @@ pi-irc/
 - Open question, parked: subagent sessions register as role `main` (no host env var distinguishes child sessions today). If the host grows one, `nick` templates gain `{role:"sub"}` for free; no workaround to build.
 
 **Validation plan**: unit tests against the fake server for each tier condition failing independently (anonymous account, human realname, foreign project, non-member, wakeTrust none); live drill on the operator's ergo — session A idle, session B (SASL-registered, same project) sends an ask over IRC DM, A wakes and replies, all inside the RPC timeout; negative control: anonymous nick's DM does not wake.
+**Validation plan**: unit tests against the fake server for each tier condition failing independently (anonymous account, human realname, foreign project, non-member, wakeTrust none); live drill on the operator's ergo — session A idle, session B (SASL-registered, same project) sends an ask over IRC DM, A wakes and replies, all inside the RPC timeout; negative control: anonymous nick's DM does not wake.
 
+### P18 — wakeOnChannel: per-agent channel wakes (done)
+
+**Problem.** The operator's specialist bench: N pi sessions with different specialities share a channel (`#lounge`); humans talk *in the channel* and the right specialist should wake and react — without a central routing brain, without per-line LLM essays, and without letting an untrusted sender vex anyone.
+
+**Config** (`delivery.wakeOnChannel`, absent = channel traffic stays passive buffer content):
+
+```jsonc
+"delivery": {
+  "wakeOnChannel": {
+    "channels": ["#lounge"],          // participating channels
+    "capabilities": "research questions, source finding, comparisons",
+    "classifier": "typesafe/jev-latest", // optional provider/model; empty = first available
+    "confidence": 0.5,                 // calibrated-probability floor
+    "contextLines": 5                  // preceding lines as classifier context
+  }
+}
+```
+
+**Gate order** (deterministic first, intelligence last, fail-closed throughout):
+
+1. **Config scope** — only listed channels, never replayed history.
+2. **Own-line skip** — echoes of our own sends never wake.
+3. **Sender trust** — the P17 tier machinery, unchanged: an untrusted sender cannot wake by mentioning the nick any more than by DMing it.
+4. **Quiet window** — WAKE_QUIET_MS shared with DM wakes.
+5. **Mention** — a trusted sender naming our nick wakes deterministically, *no classifier call*.
+6. **Classifier** — everything else asks one typed question of a Jev-class "System One" decision model through **pi's model registry** (`ctx.modelRegistry.classify`; providers the user already configured — TypeSafe, OpenRouter, OpenCode, Cloudflare…): *state* = channel, sender, the line, recent context, and **this session's own capabilities**; *question* = bool "wake me?" with a calibrated probability. Below `confidence` → sleep on. Lookup errors, `stopReason !== "stop"`, thrown exceptions → **no wake**. pi-irc owns no keys, no HTTP, no cost plumbing.
+
+No central router: every session classifies for itself; several specialists may wake on the same line (busy-presence dedupes organically). `MessageBuffer.recent()` feeds the classifier without touching read cursors; the wake itself lands the agent in its channel buffer with a system line naming the trigger (`via classifier` / `via mention`).
+
+**Why not a generative router**: cost per line, seconds of latency, and an LLM reading untrusted channel text is an injection surface. A classifier cannot follow instructions — adversarial text can only misroute *itself* (bounded: one wasted wake, rate-limited) — and the deterministic gates run before any model call regardless.
+
+**Relation to the parked gateway**: this feature came out of the ADR-0005 discussion — the specialist scenario was the gateway's last strong use case, and it turned out to need no gateway at all. Human ⇄ agent stays direct DM + P17 trust; cross-machine agent asks stay `irc ask` + `project` tier; the dispatcher/broker-injection design remains parked behind triggers T1–T3.
 ## Terms
 
 | Term | Meaning |
