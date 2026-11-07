@@ -671,6 +671,9 @@ export class IrcSession extends EventEmitter {
 	status(): Record<string, unknown> {
 		return {
 			nick: this.client.realNick ?? this.client.nick,
+			...(this.client.desiredNick !== (this.client.realNick ?? this.client.nick)
+				? { desiredNick: this.client.desiredNick }
+				: {}),
 			role: this.identity.role,
 			project: this.config.projectSlug,
 			projectChannel: this.projectChannel,

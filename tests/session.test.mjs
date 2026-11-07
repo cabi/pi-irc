@@ -348,3 +348,21 @@ test("P16: msgid dedup evicts oldest instead of wiping the window", async () => 
 });
 
 const tick = (ms) => new Promise((r) => setTimeout(r, ms));
+
+test("P16: status exposes desiredNick when 433 fallback suffixed us", async () => {
+	const srv = new FakeServer();
+	const client = new IrcClient({ nick: "pi-main-s1", username: "pi", realname: "pi-agent:main:proj:s1" }, srv);
+	srv.bind(client);
+	// Registration with a 433 for the first NICK: server bounces, client
+	// retries with a fallback suffix, registration succeeds.
+	client.startRegistration();
+	srv.say(":srv 001 pi-main-s1 :Welcome");
+	srv.say(":srv 433 * pi-main-s1 :Nickname is already in use");
+	const pending = IrcSession.connect(makeConfig(), ident, { client });
+	srv.say(":srv 376 pi-main-s1 :End of MOTD");
+	const { session } = { srv, client, session: await pending };
+	assert.ok(session.status().nick.startsWith("pi-main-s1"), "fallback nick active");
+	assert.equal(session.status().desiredNick, "pi-main-s1", "desired nick surfaced");
+	assert.equal(session.status().nick, "pi-main-s1-a", "first fallback suffix");
+	session.stop();
+});

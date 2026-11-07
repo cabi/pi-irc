@@ -81,6 +81,8 @@ const NICK_FALLBACKS = ["-a", "-b", "-c", "_", "__", "-pi"];
 export class IrcClient extends EventEmitter {
 	state: ClientState = "idle";
 	nick: string;
+	/** Nick before 433 fallback suffixes; identity anchor for peers. */
+	readonly desiredNick: string;
 	private readonly spec: RegisterSpec;
 	#transport!: Transport;
 	private registeredAt: number | null = null;
@@ -98,6 +100,8 @@ export class IrcClient extends EventEmitter {
 		super();
 		this.spec = spec;
 		this.nick = spec.nick;
+		/** Nick we asked for before 433 fallback suffixes — the anchor peers saw first. */
+		this.desiredNick = spec.nick;
 		this.currentNickBase = spec.nick;
 		this.#caps = new CapNegotiator(this.#wantedCaps());
 		this.#bindTransport(transport);
