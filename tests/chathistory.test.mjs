@@ -190,6 +190,7 @@ test("session: replayed history never wakes; live DMs still do", async () => {
 	const fetched = await session.fetchHistory("pi-sub-s2", 5);
 	assert.equal(wakes.length, 0, "replayed ask must not wake");
 	assert.ok(fetched.some((m) => m.kind === "ask"), "replayed ask is buffered and trackable");
+	srv.say(":pi-sub-s2!u@h JOIN #pi-proj pi-sub-s2-acct :pi-agent project=proj role=sub");
 	srv.say(":pi-sub-s2!u@h PRIVMSG pi-main-s1 :live ping");
 	await sleep(20);
 	assert.equal(wakes.length, 1);

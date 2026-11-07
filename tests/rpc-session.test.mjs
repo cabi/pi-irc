@@ -14,7 +14,7 @@ function cfg(port, nick) {
 		nick: { template: nick, maxLen: 30 },
 		channels: { projectTemplate: "#pi-{slug}", defaults: [], autoCreate: true, topicTemplate: "pi {slug} — {date}" },
 		capabilities: { request: [] },
-		delivery: { bufferMax: 50, wakeOnDirectMessage: true, chunkLongSends: true },
+		delivery: { bufferMax: 50, wakeOnDirectMessage: true, wakeAllowNicks: ["pi-*"], chunkLongSends: true },
 		projectSlug: "proj",
 	};
 }

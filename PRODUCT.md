@@ -72,7 +72,7 @@ pi-irc owns its configuration file(s), layered and merged (project over global):
   "delivery": {
     "bufferMax": 500,               // ring buffer size per conversation
     "wakeOnDirectMessage": true,    // steer idle agent on DM; channel chatter never wakes
-    "wakeAllowNicks": [],           // wake trust: nick globs (e.g. ["carsten", "ops-*"]); empty = anyone (private-server default)
+    "wakeAllowNicks": [],           // wake trust: nick globs; default-deny — only services-account peers or glob matches wake
     "chunkLongSends": true          // split >512-byte sends into protocol-legal PRIVMSGs
   }
 }

@@ -117,7 +117,8 @@ test("enabled: boots against mock server, serves tool ops, wakes on DM, quits on
 		await new Promise((r) => setTimeout(r, 50));
 		assert.ok(client.lines.some((l) => l.includes("PRIVMSG #pi-proj :hello team")));
 
-		// DM wakes the agent as a steer
+		// DM wakes the agent as a steer (carol is services-verified — default-deny)
+		srv.push(":carol!u@mock JOIN #pi-proj carol-acct :carol human");
 		srv.push(":carol!u@mock PRIVMSG pi-abcdef12 :status please");
 		await new Promise((r) => setTimeout(r, 50));
 		assert.equal(pi.userMessages.length, 1);

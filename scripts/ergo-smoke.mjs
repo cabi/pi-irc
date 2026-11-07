@@ -36,7 +36,9 @@ const config = {
 		topicTemplate: "pi {slug} — {date}",
 	},
 	capabilities: { request: [...SUPPORTED_CAPS] },
-	delivery: { bufferMax: 50, wakeOnDirectMessage: true, chunkLongSends: true },
+	// Default-deny wake trust: the fixture human (carol) matches the glob.
+	// The SASL-account trust path is proven by scripts/intercom-parity.mjs.
+	delivery: { bufferMax: 50, wakeOnDirectMessage: true, wakeAllowNicks: ["carol"], chunkLongSends: true },
 	projectSlug: "smoke",
 };
 const identity = { project: "smoke", role: "main", shortId: "ab12cd34" };

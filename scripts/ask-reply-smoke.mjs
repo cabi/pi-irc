@@ -24,7 +24,10 @@ const baseConfig = {
 		topicTemplate: "pi {slug} — {date}",
 	},
 	capabilities: { request: ["server-time", "extended-join", "multi-prefix"] },
-	delivery: { bufferMax: 50, wakeOnDirectMessage: true, chunkLongSends: true },
+	// Wake trust is default-deny; this smoke exercises ask/reply mechanics,
+	// so the agents trust each other by nick glob (the SASL-account path is
+	// proven by scripts/intercom-parity.mjs against the live server).
+	delivery: { bufferMax: 50, wakeOnDirectMessage: true, wakeAllowNicks: ["pi-*"], chunkLongSends: true },
 	projectSlug: "askdemo",
 };
 

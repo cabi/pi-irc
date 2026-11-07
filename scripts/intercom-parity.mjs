@@ -76,21 +76,62 @@ const ok = (name) => {
 
 // --- boot -------------------------------------------------------------------
 
+// Wake trust is default-deny: the agents register throwaway services
+// accounts and attach over SASL, so their cross-wakes are earned by a real
+// account (the one IRC identity that costs a password). hank stays a plain
+// human who must match a glob; mallory neither has an account nor a glob.
+const AGENT_ACCTS = {
+	main: { username: `paritym-${SUFFIX}`, password: `pw-m-${SUFFIX}` },
+	sub: { username: `paritys-${SUFFIX}`, password: `pw-s-${SUFFIX}` },
+};
+async function registerAccount({ username, password }) {
+	// ergo's NickServ registers the account under the connecting nick —
+	// the probe nick MUST be the account name the agent will SASL with.
+	const c = humanClient(username);
+	await Promise.race([
+		c.welcome(),
+		sleep(8000).then(() => {
+			throw new Error(`registration probe for ${username} got no 001 (throttled?)`);
+		}),
+	]);
+	c.send(`NS REGISTER ${password}`);
+	const deadline = Date.now() + 10000;
+	while (!c.lines.some((l) => /NickServ.*NOTICE.*(egistered|ccount created|lready)/.test(l))) {
+		if (Date.now() > deadline) throw new Error(`NickServ registration timeout for ${username}`);
+		await sleep(150);
+	}
+	c.send("NS LOGOUT");
+	await sleep(300);
+	c.send("QUIT :bye");
+	await sleep(200);
+}
+await registerAccount(AGENT_ACCTS.main);
+await registerAccount(AGENT_ACCTS.sub);
+
 console.log(`target: ${USE_TLS ? "tls" : "plain"}://${HOST}:${PORT}${USE_TLS ? ` (ca ${CA_FILE})` : ""}`);
-console.log("booting main + sub agent…");
-const main = await IrcSession.connect(baseConfig, { project: "parity", role: "main", shortId: "m1a2b3c4" });
-// Wake trust: agents pass on roster verification alone; humans must match a
-// glob. hank is allowlisted, mallory is not.
+console.log("booting main + sub agent (SASL accounts registered)…");
+const main = await IrcSession.connect(
+	{ ...baseConfig, auth: { username: AGENT_ACCTS.main.username, password: AGENT_ACCTS.main.password } },
+	{ project: "parity", role: "main", shortId: "m1a2b3c4" },
+);
 const sub = await IrcSession.connect(
-	{ ...baseConfig, delivery: { ...baseConfig.delivery, wakeAllowNicks: ["hank*"] } },
+	{
+		...baseConfig,
+		auth: { username: AGENT_ACCTS.sub.username, password: AGENT_ACCTS.sub.password },
+		delivery: { ...baseConfig.delivery, wakeAllowNicks: ["hank*"] },
+	},
 	{ project: "parity", role: "sub", shortId: "s5d6e7f8" },
 );
-const SUB_NICK = "pi-sub-s5d6e7f8";
+// ergo's nick reservation renames SASL sessions onto their account nick,
+// so trust the session's actual nick, never a constructed one.
+const MAIN_NICK = main.status().nick;
+const SUB_NICK = sub.status().nick;
+console.log(`nicks: main=${MAIN_NICK} sub=${SUB_NICK}`);
 await sleep(400);
 
 const rosterOf = (s, nick) => s.rosterView().find((p) => p.nick === nick);
 assert.ok(rosterOf(main, SUB_NICK)?.role === "sub", JSON.stringify(main.rosterView()));
-assert.ok(rosterOf(sub, "pi-main-m1a2b3c4")?.role === "main");
+assert.ok(rosterOf(sub, MAIN_NICK)?.role === "main");
 ok("agents discovered each other with roles (roster via extended-join + WHO)");
 
 // --- busy presence ----------------------------------------------------------
@@ -120,7 +161,7 @@ const r = sub.reply(inbound[0].id, "forty-two, obviously");
 const answer = await askP;
 assert.equal(answer.status, "replied");
 assert.equal(answer.reply, "forty-two, obviously");
-assert.equal(r.to, "pi-main-m1a2b3c4");
+assert.equal(r.to, MAIN_NICK);
 ok(`ask/reply round-trip: main unblocked with "${answer.reply}"`);
 
 assert.equal(sub.rpc.pendingInbound().length, 0);
@@ -136,8 +177,8 @@ sub.on("wake", (w) => subWakes.push(w.from));
 await sleep(5500);
 await main.send(SUB_NICK, "direct word — no ask");
 await sleep(500);
-assert.ok(subWakes.includes("pi-main-m1a2b3c4"), JSON.stringify(subWakes));
-ok("agent DM woke sub (roster-verified, no allowlist needed)");
+assert.ok(subWakes.includes(MAIN_NICK), JSON.stringify(subWakes));
+ok("agent DM woke sub (SASL account verified, no allowlist needed)");
 
 console.log("humans join…");
 const hank = humanClient(`hank-${SUFFIX}`);

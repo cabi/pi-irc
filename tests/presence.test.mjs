@@ -140,13 +140,19 @@ test("busy presence: 306/305 confirmations land in the buffer as system notes", 
 	assert.ok(msgs.some((t) => /back \(no longer away\)/.test(t)), `305 buffered: ${msgs}`);
 });
 
-test("wake trust: empty allowlist wakes for anyone (default stays loud)", async () => {
+test("wake trust: empty allowlist is default-deny — strangers never wake", async () => {
 	const { srv, session } = await boot({ wakeAllowNicks: [] });
 	const wakes = [];
 	session.on("wake", (w) => wakes.push(w));
 	srv.say(":stranger!u@h PRIVMSG pi-main-s1 :hello?");
-	assert.equal(wakes.length, 1, "no allowlist configured → wake");
-	assert.equal(wakes[0].from, "stranger");
+	assert.equal(wakes.length, 0, "no account, no allowlist entry → no wake");
+	const msgs = session.read("stranger").map((m) => m.text);
+	assert.ok(msgs.some((t) => /not wake-trusted/.test(t)), `marked untrusted: ${msgs}`);
+	// A services-account holder (extended-join) wakes even with an empty list.
+	srv.say(":pi-sub-7!pi@h JOIN #pi-proj pi-sub-7-acct :pi-agent project=proj role=sub");
+	srv.say(":pi-sub-7!pi@h PRIVMSG pi-main-s1 :ready?");
+	assert.equal(wakes.length, 1, "account-verified peer wakes");
+	assert.equal(wakes[0].from, "pi-sub-7");
 });
 
 test("wake trust: human must match a glob, strangers are only buffered", async () => {
@@ -178,17 +184,19 @@ test("wake trust: wildcard globs match case-insensitively", async () => {
 	assert.equal(wakes.length, 1, "lowercase nick matches uppercase glob");
 });
 
-test("wake trust: roster-verified agents always wake, glob or not", async () => {
+test("wake trust: self-declared agent metadata alone never wakes; an account does", async () => {
 	const { srv, session } = await boot({ wakeAllowNicks: ["carsten"] });
 	const wakes = [];
 	session.on("wake", (w) => wakes.push(w));
 
-	// A peer whose WHO realname marks them as a pi agent.
-	srv.say(":pi-sub-9!pi@h JOIN #pi-proj");
-	srv.say(":srv 352 pi-main-s1 #pi-proj pi h srv pi-sub-9 H :0 pi-agent project=proj role=sub session=9");
-	srv.say(":srv 315 pi-main-s1 #pi-proj :End of WHO list");
+	// Forged realname, no services account: buffered, never wakes.
+	srv.say(":mallory!pi@h JOIN #pi-proj * :pi-agent project=proj role=main session=666");
+	srv.say(":mallory!pi@h PRIVMSG pi-main-s1 :trust me");
+	assert.equal(wakes.length, 0, "self-declared realname is not identity");
 
+	// Same join shape, but holding a real account: wakes.
+	srv.say(":pi-sub-9!pi@h JOIN #pi-proj pi-sub-9-acct :pi-agent project=proj role=sub");
 	srv.say(":pi-sub-9!pi@h PRIVMSG pi-main-s1 :ask: ready?");
-	assert.equal(wakes.length, 1, "roster agent bypasses the allowlist");
+	assert.equal(wakes.length, 1, "services account bypasses the allowlist");
 	assert.equal(wakes[0].from, "pi-sub-9");
 });

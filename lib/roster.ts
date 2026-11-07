@@ -30,6 +30,8 @@ export interface Peer {
 	self: boolean;
 	/** Away flag as seen via WHO (H/G), away-notify, or our own AWAY (305/306). */
 	away?: boolean;
+	/** Services account from extended-join (undefined = logged out). */
+	account?: string;
 }
 
 export interface RealnameInfo {
@@ -85,6 +87,7 @@ export class Roster {
 			lastSeen: patch.lastSeen ?? Date.now(),
 			self: patch.self ?? existing?.self ?? this.selfNick === key,
 			away: patch.away ?? existing?.away,
+			account: patch.account ?? existing?.account,
 		};
 		this.peers.set(key, peer);
 		return peer;

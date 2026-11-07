@@ -349,7 +349,13 @@ export class IrcSession extends EventEmitter {
 		});
 		c.on("join", (e) => {
 			this.channels.addMember(e.channel, e.nick);
-		this.roster.touch(e.nick, e.self ? { self: true } : {});
+		this.roster.touch(e.nick, e.self
+			? { self: true }
+			// extended-join account: "*" means logged out; store only real
+			// accounts — they authenticate against services and gate wake.
+			: e.account !== undefined && e.account !== "*"
+				? { account: e.account }
+				: {});
 		// Self-join = fresh channel view: pull recent history in the
 		// background (no-op without draft/chathistory or with limit 0).
 		if (e.self && this.#historyLimit > 0) {
@@ -543,6 +549,20 @@ export class IrcSession extends EventEmitter {
 				}
 				break;
 			}
+		case String(NUMERICS.RPL_WHOSPCRPL): {
+				// WHOX %uhnafr: <me> <user> <host> <nick> <flags> <account> :<realname>
+				const [, , , nick, flags, account, gecos = ""] = p;
+				if (nick) {
+					this.roster.applyRealname(nick, gecos);
+					// "0" (WHOX) and "*" (extended-join) both mean logged out.
+					const acct = account && account !== "0" && account !== "*" ? account : undefined;
+					this.roster.touch(nick, {
+						away: flags?.includes("G") ? true : flags?.includes("H") ? false : undefined,
+						...(acct ? { account: acct } : {}),
+					});
+				}
+				break;
+			}
 			default:
 				break;
 		}
@@ -569,12 +589,11 @@ export class IrcSession extends EventEmitter {
 
 #maybeWake(from: string, text: string): void {
 		if (!this.config.delivery.wakeOnDirectMessage) return;
-		const allow = this.config.delivery.wakeAllowNicks ?? [];
-		if (allow.length > 0 && !this.#wakeTrusted(from)) {
+		if (!this.#wakeTrusted(from)) {
 			this.buffer.push({
 				conv: from,
 				from,
-				text: `(DM buffered — ${from} is not on the wake allowlist)`,
+				text: `(DM buffered — ${from} is not wake-trusted: no verified services account and not on the wake allowlist)`,
 				kind: "system",
 			});
 			return;
@@ -585,11 +604,17 @@ export class IrcSession extends EventEmitter {
 		this.emit("wake", { from, text });
 	}
 
-	/** Wake trust: roster-verified agents always pass; humans must match a glob. */
+	/**
+	 * Wake trust is default-deny: a nick wakes us only when it holds a
+	 * services account (extended-join `account` — the one identity on IRC
+	 * that costs a password to obtain) or matches an operator-configured
+	 * glob. Self-declared realname metadata alone never wakes; it is free
+	 * text anyone can send.
+	 */
 	#wakeTrusted(nick: string): boolean {
 		const peer = this.roster.get(nick);
-		if (peer?.kind === "agent") return true;
-		return this.config.delivery.wakeAllowNicks.some((g) =>
+		if (peer?.account) return true;
+		return (this.config.delivery.wakeAllowNicks ?? []).some((g) =>
 			new RegExp(`^${g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*")}$`, "i").test(nick),
 		);
 	}

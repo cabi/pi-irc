@@ -35,7 +35,10 @@ const baseConfig = {
 		topicTemplate: "pi {slug} — {date}",
 	},
 	capabilities: { request: ["server-time", "extended-join", "multi-prefix", "away-notify"] },
-	delivery: { bufferMax: 50, wakeOnDirectMessage: true, chunkLongSends: true },
+	// Wake trust is default-deny; this smoke exercises coordination, not
+	// trust — the agents and the fixture human (carol) trust by nick glob.
+	// The SASL-account trust path is proven by scripts/intercom-parity.mjs.
+	delivery: { bufferMax: 50, wakeOnDirectMessage: true, wakeAllowNicks: ["pi-*", "carol"], chunkLongSends: true },
 	projectSlug: "demo",
 };
 

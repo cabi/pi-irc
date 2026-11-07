@@ -69,8 +69,11 @@ export interface HistoryConfig {
 export interface DeliveryConfig {
 	/**
 	 * Wake trust: nick globs (case-insensitive, `*` wildcard) allowed to wake
-	 * this session via DM. Roster-verified agents always wake. Empty = anyone
-	 * (fine on a private server, loud on shared ones).
+	 * this session via DM. Default-deny: a peer wakes only when it matches a
+	 * glob or holds a services account (extended-join; SASL-authenticated —
+	 * the one IRC identity that costs a password). Self-declared agent
+	 * realname metadata never wakes. On a server without services, list the
+	 * trusted nicks/globs here explicitly.
 	 */
 	wakeAllowNicks: string[];
 	bufferMax: number;

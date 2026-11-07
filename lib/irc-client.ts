@@ -186,6 +186,11 @@ export class IrcClient extends EventEmitter {
 		this.#transport.send(wire.part(channel, reason));
 	}
 
+	/**
+	 * WHO, defaulting to the WHOX field set %uhnafr → 354 replies carry
+	 * user, host, nick, flags (H/G away), services account, realname.
+	 * Servers without WHOX still answer with plain 352 (handled too).
+	 */
 	who(mask: string): void {
 		this.#transport.send(wire.who(mask));
 	}
