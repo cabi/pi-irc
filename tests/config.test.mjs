@@ -39,18 +39,17 @@ test("missing global config disables the extension (null)", () => {
 	assert.equal(loadConfig({ globalPath: path.join(dir, "pi-irc.json") }), null);
 });
 
-test("project server override is ignored — the global file owns the identity", () => {
+test("project server object is ignored — only registry names are honored", () => {
 	const dir = tmpDir();
 	const globalPath = writeConfig(dir, "global.json", {});
 	const projectPath = writeConfig(dir, "project/.pi/pi-irc.json", { server: { host: "irc.test" } });
-	// No host from the (only trusted) global file → loud ConfigError, not a
-	// silent connection to a repo-chosen server.
+	// A repo cannot invent an endpoint: the object form is ignored with a
+	// warning and the empty registry fails loudly instead of connecting.
 	expectConfigError(
 		() => loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "project") }),
-		"server.host",
+		"servers",
 	);
 });
-
 test("defaults land where files are silent", () => {
 	const dir = tmpDir();
 	const globalPath = writeConfig(dir, "global.json", { server: { host: "irc.example.net" } });
@@ -86,32 +85,44 @@ test("project section overrides global where allowed; defaults arrays replace, n
 	assert.deepEqual(cfg.channels.defaults, ["#pi-project-ops"]);
 });
 
-test("trust boundary: project file cannot set server, auth, nick, or delivery", () => {
+test("trust boundary (P19): endpoints and credentials stay admin-owned; policy is project-owned", () => {
 	const dir = tmpDir();
 
 	const globalPath = writeConfig(dir, "global.json", {
-		server: { host: "irc.example.net", port: 6667, passwordEnv: "IRC_PASS", tlsInsecure: false },
-		auth: { username: "agent", passwordEnv: "IRC_PASS" },
+		servers: {
+			home: {
+				host: "irc.example.net",
+				port: 6667,
+				passwordEnv: "IRC_PASS",
+				tlsInsecure: false,
+				auth: { username: "agent", passwordEnv: "IRC_PASS" },
+			},
+		},
+		defaultServer: "home",
 		nick: { template: "pi-{role}-{shortId}" },
 		delivery: { bufferMax: 100, wakeAllowNicks: ["admin"] },
 	});
 
 	const projectPath = writeConfig(dir, "project/.pi/pi-irc.json", {
+		servers: { evil: { host: "evil.example" } },
 		server: { host: "evil.example", passwordEnv: "ATTACKER_VAR", tlsInsecure: true },
 		auth: { username: "evil", password: "stolen" },
-		nick: { template: "evil-{shortId}" },
+		nick: { template: "reviewer-{shortId}" },
 		delivery: { bufferMax: 1, wakeAllowNicks: ["*"] },
 	});
 
 	const cfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "project") });
+	// Endpoint and credentials untouched by the project file.
 	assert.equal(cfg.server.host, "irc.example.net");
 	assert.equal(cfg.server.passwordEnv, "IRC_PASS");
 	assert.equal(cfg.server.tlsInsecure, false);
-	assert.equal(cfg.auth.username, "agent");
-	assert.equal(cfg.auth.passwordEnv, "IRC_PASS");
-	assert.equal(cfg.nick.template, "pi-{role}-{shortId}");
-	assert.equal(cfg.delivery.bufferMax, 100);
-	assert.deepEqual(cfg.delivery.wakeAllowNicks, ["admin"]);
+	assert.equal(cfg.serverName, "home");
+	assert.equal(cfg.auth?.username, "agent");
+	assert.equal(cfg.auth?.passwordEnv, "IRC_PASS");
+	// P19: nick and delivery are project policy now.
+	assert.equal(cfg.nick.template, "reviewer-{shortId}");
+	assert.equal(cfg.delivery.bufferMax, 1);
+	assert.deepEqual(cfg.delivery.wakeAllowNicks, ["*"]);
 });
 
 test("global auth reaches the config (was silently dropped by the merge)", () => {
@@ -191,10 +202,10 @@ test("wakeOnChannel: fractional confidence parses, out-of-range floats reject", 
 	}
 });
 
-test("missing server.host is named, not generic", () => {
+test("empty global config names the registry, not a generic error", () => {
 	const dir = tmpDir();
 	const globalPath = writeConfig(dir, "empty.json", {});
-	expectConfigError(() => loadConfig({ globalPath, projectDir: dir }), "server.host");
+	expectConfigError(() => loadConfig({ globalPath, projectDir: dir }), "servers");
 });
 
 test("invalid JSON names the file", () => {
@@ -285,6 +296,31 @@ test("genuinely broken configs still fail loudly", () => {
 
 test("delivery flood keys: defaults, clamping, project merge", () => {
 	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", { server: { host: "irc.example.net" } });
+	const cfg = loadConfig({ globalPath, projectDir: "/work/My_Project" });
+	assert.equal(cfg.delivery.burst, 8);
+	assert.equal(cfg.delivery.intervalMs, 1000);
+	assert.equal(cfg.delivery.maxQueue, 512);
+
+	// P19: delivery is project policy — a project may retune its own flood
+	// pacing (shallow merge, unlisted keys keep the global value).
+	const projectPath = writeConfig(path.join(dir, "p"), ".pi/pi-irc.json", {
+		delivery: { burst: 2, intervalMs: 500 },
+	});
+
+	const projCfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "p") });
+	assert.equal(projCfg.delivery.burst, 2, "project delivery retunes its own pacing");
+	assert.equal(projCfg.delivery.intervalMs, 500);
+	assert.equal(projCfg.delivery.maxQueue, 512);
+
+	expectConfigError(
+		() =>
+			loadConfig({
+				globalPath: writeConfig(dir, "bad.json", { server: { host: "irc.example.net" }, delivery: { burst: 0 } }),
+			}),
+		"delivery.burst",
+	);
+});
 
 test("wakeOnChannel: parsed with defaults when present", () => {
 	const dir = tmpDir();
@@ -323,27 +359,136 @@ test("wakeOnChannel: confidence must stay within 0–1", () => {
 	});
 	expectConfigError(() => loadConfig({ globalPath, projectDir: dir }), "delivery.wakeOnChannel.confidence");
 });
-	const globalPath = writeConfig(dir, "global.json", { server: { host: "irc.example.net" } });
-	const cfg = loadConfig({ globalPath, projectDir: "/work/My_Project" });
-	assert.equal(cfg.delivery.burst, 8);
-	assert.equal(cfg.delivery.intervalMs, 1000);
-	assert.equal(cfg.delivery.maxQueue, 512);
 
-	// delivery is global-only (P15-a trust boundary): a project file trying
-	// to retune it is ignored with a warning, never merged.
-	const projectPath = writeConfig(path.join(dir, "p"), ".pi/pi-irc.json", {
-		delivery: { burst: 2, intervalMs: 500 },
+// --- P19: servers registry, per-project worlds ---
+
+test("P19: project picks its world by registry name", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", {
+		servers: {
+			irc1: { host: "irc.one", port: 6667 },
+			irc2: { host: "irc.two", port: 6697, tls: true, auth: { username: "u2", password: "p2" } },
+		},
+		defaultServer: "irc1",
+	});
+	const projectPath = writeConfig(dir, "p/.pi/pi-irc.json", { server: "irc2" });
+
+	const cfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "p") });
+	assert.equal(cfg.serverName, "irc2");
+	assert.equal(cfg.server.host, "irc.two");
+	assert.equal(cfg.server.tls, true);
+	assert.equal(cfg.auth?.username, "u2");
+});
+
+test("P19: absent project server falls back to defaultServer", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", {
+		servers: { a: { host: "a.example" }, b: { host: "b.example" } },
+		defaultServer: "b",
+	});
+	const projectPath = writeConfig(dir, "p/.pi/pi-irc.json", { channels: { defaults: ["#x"] } });
+
+	const cfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "p") });
+	assert.equal(cfg.serverName, "b");
+	assert.equal(cfg.server.host, "b.example");
+});
+
+test("P19: a single-world machine needs no defaultServer", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", { servers: { only: { host: "only.example" } } });
+
+	const cfg = loadConfig({ globalPath, projectDir: dir });
+	assert.equal(cfg.serverName, "only");
+});
+
+test("P19: two worlds and no pick anywhere is an error naming defaultServer", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", {
+		servers: { a: { host: "a.example" }, b: { host: "b.example" } },
+	});
+	expectConfigError(() => loadConfig({ globalPath, projectDir: dir }), "defaultServer");
+});
+
+test("P19: project \"off\" disables the extension for that project", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", { servers: { a: { host: "a.example" } } });
+	const projectPath = writeConfig(dir, "p/.pi/pi-irc.json", { server: "off" });
+
+	const cfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "p") });
+	assert.equal(cfg, null);
+});
+
+test("P19: unknown server name fails loudly with the known names", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", {
+		servers: { irc1: { host: "irc.one" }, irc2: { host: "irc.two" } },
+		defaultServer: "irc1",
+	});
+	const projectPath = writeConfig(dir, "p/.pi/pi-irc.json", { server: "irc3" });
+
+	assert.throws(
+		() => loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "p") }),
+		/unknown server name "irc3" — known: irc1, irc2/,
+	);
+});
+
+test("P19: legacy top-level server/auth becomes the implicit default world", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", {
+		server: { host: "legacy.example", port: 6667, tls: false },
+		auth: { username: "agent", passwordEnv: "IRC_PASS" },
+	});
+	const projectPath = writeConfig(dir, "p/.pi/pi-irc.json", { server: "default" });
+
+	const cfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "p") });
+	assert.equal(cfg.serverName, "default");
+	assert.equal(cfg.server.host, "legacy.example");
+	assert.equal(cfg.auth?.passwordEnv, "IRC_PASS");
+});
+
+test("P19: mixing servers registry and top-level server/auth is an error", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", {
+		servers: { a: { host: "a.example" } },
+		server: { host: "legacy.example" },
+	});
+	expectConfigError(() => loadConfig({ globalPath, projectDir: dir }), "servers");
+
+	const globalPath2 = writeConfig(dir, "g2.json", {
+		servers: { a: { host: "a.example" } },
+		auth: { username: "u", password: "p" },
+	});
+	expectConfigError(() => loadConfig({ globalPath: globalPath2, projectDir: dir }), "auth");
+});
+
+test("P19: defaultServer must name a registry entry", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", {
+		servers: { a: { host: "a.example" } },
+		defaultServer: "nope",
+	});
+	expectConfigError(() => loadConfig({ globalPath, projectDir: dir }), "server");
+});
+
+test("P19: entry host is validated inside its registry slot", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", {
+		servers: { a: { port: 6667 } },
+	});
+	expectConfigError(() => loadConfig({ globalPath, projectDir: dir }), "server.host");
+});
+
+test("P19: per-project wakeOnChannel rides the project delivery section", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", {
+		servers: { a: { host: "a.example" } },
+		delivery: { wakeAllowNicks: ["admin"] },
+	});
+	const projectPath = writeConfig(dir, "p/.pi/pi-irc.json", {
+		delivery: { wakeOnChannel: { channels: ["#lounge"], capabilities: "frontend and CSS" } },
 	});
 
-	const projCfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "p") });
-	assert.equal(projCfg.delivery.burst, 8, "project delivery section ignored");
-	assert.equal(projCfg.delivery.intervalMs, 1000);
-
-	expectConfigError(
-		() =>
-			loadConfig({
-				globalPath: writeConfig(dir, "bad.json", { server: { host: "irc.example.net" }, delivery: { burst: 0 } }),
-			}),
-		"delivery.burst",
-	);
+	const cfg = loadConfig({ globalPath, projectPath, projectDir: path.join(dir, "p") });
+	assert.equal(cfg.delivery.wakeOnChannel?.capabilities, "frontend and CSS");
+	assert.deepEqual(cfg.delivery.wakeAllowNicks, ["admin"], "unlisted global keys survive");
 });

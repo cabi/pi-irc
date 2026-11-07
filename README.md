@@ -40,35 +40,45 @@ up edits to the checkout.
 
 ## Configure
 
-pi-irc ships disabled until a global config exists — one clear log line, no crash. Layered config with a trust boundary — the project file lives in the repo, so it only shapes participation:
+pi-irc ships disabled until a global config exists — one clear log line, no crash. Layered config split by *what a thing is* (P19): the admin's global file owns the machine's IRC **worlds** — endpoints, credentials, TLS trust — once per server; each project picks a world *by name* and owns its participation and wake policy:
 
-- `~/.pi/agent/pi-irc.json` — admin-owned: **server, auth, nick, delivery** (identity, transport, wake trust)
-- `<project>/.pi/pi-irc.json` — project-owned: **slug, channels, capabilities, history** (participation & catch-up). Settings for admin-owned sections here are ignored with a warning.
+- `~/.pi/agent/pi-irc.json` — admin-owned: the **`servers` registry** (name → `{ host, port, tls, auth, … }`), `defaultServer`, machine defaults for every section
+- `<project>/.pi/pi-irc.json` — project-owned: `server` (a registry **name** or `"off"`), plus full `channels`, `capabilities`, `delivery` (wake trust and `wakeOnChannel` included), `nick`, `history`, `slug`
+- a project can never invent an endpoint or touch credentials: `servers`, `auth`, and a `server` *object* in a project file are ignored with a warning — only names are honored
 
-Minimal global config (see `docs/example.pi-irc.json` for all keys):
+Minimal global config — one world, no `defaultServer` needed on single-world machines (see `docs/example.pi-irc.json` for all keys):
 
 ```jsonc
 {
-	"server": { "host": "irc.example.net", "port": 6697, "tls": true },
+	"servers": { "home": { "host": "irc.example.net", "port": 6697, "tls": true } },
 	"nick": { "template": "pi-{shortId}" },
 	"channels": { "projectTemplate": "#pi-{slug}", "autoCreate": true },
 }
 ```
 
-Server passwords are referenced, never stored: `"passwordEnv": "PI_IRC_PASSWORD"`.
-
-Self-signed or internal-CA servers have two options — pin the cert (keeps full verification) or skip it entirely: `"server": { "tlsCaFile": "~/.pi/agent/certs/irc.lan.pem" }` or `"tlsInsecure": true`; the two are mutually exclusive.
-
-Authenticated networks (SASL PLAIN over TLS — Libera-class servers):
+Many worlds — three projects on `home` (the default), one on `libera`, one not on IRC at all:
 
 ```jsonc
+// ~/.pi/agent/pi-irc.json
 {
-	"server": { "host": "irc.example.net", "port": 6697, "tls": true },
-	"auth": { "username": "pi-agent", "passwordEnv": "PI_IRC_SASL_PASSWORD" },
+	"servers": {
+		"home":   { "host": "irc.lan", "port": 6697, "tls": true, "auth": { "username": "pi", "passwordEnv": "PI_IRC_SASL_PASSWORD" } },
+		"libera": { "host": "irc.libera.chat", "port": 6697, "tls": true }
+	},
+	"defaultServer": "home"
 }
+// <project>/.pi/pi-irc.json — pick a world…
+{ "server": "libera" }
+// …or stay off IRC entirely
+{ "server": "off" }
 ```
 
-`auth` adds the `sasl` capability automatically and **fails closed**: if the server won't negotiate SASL or the credentials are rejected, the session never registers anonymously. Self-signed internal CAs: `"server": { "tlsInsecure": true }`; SNI override behind proxies: `"tlsServerName": "…"`.
+Server passwords are referenced, never stored: `"passwordEnv": "PI_IRC_PASSWORD"`. Legacy top-level `server`/`auth` still works (it becomes the implicit `default` world, with a deprecation warning).
+
+Self-signed or internal-CA servers have two options — pin the cert (keeps full verification) or skip it entirely: `"tlsCaFile": "~/.pi/agent/certs/irc.lan.pem"` or `"tlsInsecure": true` inside the server entry; the two are mutually exclusive.
+
+Authenticated networks (SASL PLAIN over TLS — Libera-class servers): put `auth` inside the server entry as above. It adds the `sasl` capability automatically and **fails closed**: if the server won't negotiate SASL or the credentials are rejected, the session never registers anonymously. SNI override behind proxies: `"tlsServerName": "…"`.
+
 
 **Outbound pacing** (flood control, admin-owned `delivery` section): a token bucket sends `delivery.burst` messages immediately (default 8), then one per `delivery.intervalMs` (default 1000). Queued chunks are bounded by `delivery.maxQueue` (default 512) — a send beyond the bound fails loudly to the caller instead of growing memory without limit. Long messages chunk at 400 UTF-8 bytes with `(i/n)` part markers; replies to `ask` reassemble exactly.
 

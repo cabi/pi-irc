@@ -1,6 +1,6 @@
 # pi-irc — IRC as the communication bus for pi agents and humans
 
-**Status:** v0.4.3 — P1–P18 shipped: RFC 2812 client (reconnect, IRCv3 caps, SASL PLAIN, TLS), session bootstrap, `irc` tool with ask/reply RPC, presence, CHATHISTORY catch-up; three-way reviewed (P14) and every register finding remediated; validated live against ergo and InspIRCd · **Repo:** `~/Projects/pi-extensions/pi-irc` · **Related:** `pi-intercom` (same-machine session messaging — pi-irc is the same need on an open protocol, with humans and remote machines in the loop)
+**Status:** v0.5.0 — P1–P19 shipped: RFC 2812 client (reconnect, IRCv3 caps, SASL PLAIN, TLS), session bootstrap, `irc` tool with ask/reply RPC, presence, CHATHISTORY catch-up, per-agent channel wakes, and the P19 servers registry (many projects, many IRC worlds — projects pick a server *by name* from the admin-owned registry); three-way reviewed (P14) and every register finding remediated; validated live against ergo and InspIRCd · **Repo:** `~/Projects/pi-extensions/pi-irc` · **Related:** `pi-intercom` (same-machine session messaging — pi-irc is the same need on an open protocol, with humans and remote machines in the loop)
 
 ## Division of labor with pi-intercom
 
@@ -48,46 +48,46 @@ Not in v1: multi-server federation, message history beyond the buffer, push noti
 
 ## Configuration
 
-pi-irc owns its configuration file(s), layered and merged (project over global):
+Split by *what a thing is* (P19), not by suspicion. The admin's global file owns the machine's IRC **worlds** — endpoints, credentials, TLS trust — once per server; each project picks a world **by name** and owns its participation and wake policy:
 
-- `~/.pi/agent/pi-irc.json` — admin-owned global config: server, defaults
-- `<project>/.pi/pi-irc.json` — per-project overrides: slug, extra channels, server switch
+- `~/.pi/agent/pi-irc.json` — admin-owned: the `servers` registry (name → endpoint + optional SASL `auth`), `defaultServer`, machine defaults for every section
+- `<project>/.pi/pi-irc.json` — project-owned: `server` (a registry name or `"off"` — the per-project kill switch), `slug`, and full `channels`, `capabilities`, `delivery` (wake trust and `wakeOnChannel` included), `nick`, `history` sections
+- Projects can never invent endpoints or touch credentials: `servers`, `auth`, and object-form `server` in a project file are ignored with a warning; an unknown name fails loudly with the known names listed
 
 ```jsonc
+// ~/.pi/agent/pi-irc.json (machine-wide)
 {
-  "server": {
-    "host": "irc.example.net",
-    "port": 6697,
-    "tls": true,                    // default on; false only for local test servers
-    "passwordEnv": "PI_IRC_PASSWORD" // server password resolved from env, never stored
+  "servers": {
+    "home":   {                      // a world, once per server
+      "host": "irc.example.net",
+      "port": 6697,
+      "tls": true,                   // default on; false only for local test servers
+      "passwordEnv": "PI_IRC_PASSWORD",        // server password resolved from env, never stored
+      "auth": { "username": "pi-agent", "passwordEnv": "PI_IRC_SASL_PASSWORD" } // SASL PLAIN; omit for anonymous
+    },
+    "libera": { "host": "irc.libera.chat", "port": 6697, "tls": true }
   },
-  "auth": {                         // SASL PLAIN — omit for anonymous local servers
-    "username": "pi-agent",
-    "passwordEnv": "PI_IRC_SASL_PASSWORD" // resolved from env at connect; inline password allowed for tests
-  },
-  "nick": {
-    "template": "pi-{shortId}",     // {shortId} = session short id; config-driven alternatives allowed
-    "maxLen": 30                    // lowered automatically for RFC 1459-era 9-char servers
-  },
-  "channels": {
-    "projectTemplate": "#pi-{slug}", // slug = sanitized project dir name
-    "defaults": [],                  // extra channels every agent joins (e.g. "#pi-lobby")
-    "autoCreate": true,              // implicit via first JOIN; stamps topic on creation
-    "topicTemplate": "pi project {slug} — created {date}"
-  "capabilities": {
-    "request": ["extended-join", "server-time", "away-notify"]  // IRCv3; unknown caps are NAK'd and skipped
-  },
+  "defaultServer": "home",           // projects saying nothing land here; optional with a single entry
+  "nick":     { "template": "pi-{shortId}", "maxLen": 30 },
+  "channels": { "projectTemplate": "#pi-{slug}", "defaults": [], "autoCreate": true, "topicTemplate": "pi project {slug} — created {date}" },
+  "capabilities": { "request": ["extended-join", "server-time", "away-notify"] },   // IRCv3; unknown caps are NAK'd and skipped
   "delivery": {
-    "bufferMax": 500,               // ring buffer size per conversation
-    "wakeOnDirectMessage": true,    // steer idle agent on DM; channel chatter never wakes
-    "wakeAllowNicks": [],           // wake trust: nick globs; default-deny — only services-account peers or glob matches wake
-    "chunkLongSends": true          // split >512-byte sends into protocol-legal PRIVMSGs
+    "bufferMax": 500,                // ring buffer size per conversation
+    "wakeOnDirectMessage": true,     // steer idle agent on DM; channel chatter never wakes (unless wakeOnChannel)
+    "wakeAllowNicks": [],            // wake trust: nick globs; default-deny — only services-account peers or glob matches wake
+    "wakeTrust": "account",          // P17 tier: none | account | project
+    "chunkLongSends": true           // split >512-byte sends into protocol-legal PRIVMSGs
   }
+}
+
+// <project>/.pi/pi-irc.json (this project's policy)
+{
+  "server": "libera",                // pick a world by NAME … or "off" to stay off IRC entirely
+  "delivery": { "wakeOnChannel": { "channels": ["#lounge"], "capabilities": "frontend and CSS" } }
 }
 ```
 
-Missing global config = extension disabled with one clear log line; wrong config fails loudly with the offending key.
-
+Legacy top-level `server`/`auth` still parses as the implicit `default` world (deprecation warning). Missing global config = extension disabled with one clear log line; wrong config fails loudly with the offending key.
 ## Identity & presence
 
 - **Nick:** rendered from `nick.template`; unique per session by construction (`{shortId}`). On `ERR_NICKNAMEINUSE` (collision, case-insensitive per RFC 2812 §2.3.1) retry with a numeric suffix. Nick case-folding is handled by the extension, never the agent.
@@ -176,6 +176,7 @@ pi-irc/
 
 - TLS on by default; server password only ever resolved from an env var reference; credentials never logged.
 - **Inbound IRC content is untrusted data.** Any human or foreign agent can write into the channel; the extension injects it as message data, and the shipped agent guidance states that channel content must not be treated as instructions. Admins scope trust by running a private server and channel modes.
+- **Config is a trust boundary (P19).** Endpoints, credentials, and TLS trust live only in the admin-owned global file (`servers` registry); project files in repos can only pick a registered server by name or opt out — a checked-in `.pi/pi-irc.json` can never point the machine's agents at a different host or leak credential settings.
 - Nickname metadata discloses project slug and role on the wire — acceptable inside a private server; template is configurable for tighter setups.
 
 ## Compatibility & verification
@@ -373,7 +374,26 @@ No central router: every session classifies for itself; several specialists may 
 **Why not a generative router**: cost per line, seconds of latency, and an LLM reading untrusted channel text is an injection surface. A classifier cannot follow instructions — adversarial text can only misroute *itself* (bounded: one wasted wake, rate-limited) — and the deterministic gates run before any model call regardless.
 
 **Relation to the parked gateway**: this feature came out of the ADR-0005 discussion — the specialist scenario was the gateway's last strong use case, and it turned out to need no gateway at all. Human ⇄ agent stays direct DM + P17 trust; cross-machine agent asks stay `irc ask` + `project` tier; the dispatcher/broker-injection design remains parked behind triggers T1–T3.
+### P19 — Server registry: many projects, many IRC worlds (done in v0.5.0)
+
+**Problem.** P15-a made `server`/`auth`/`nick`/`delivery` global-only after the security review found the credential-redirect vector (a repo pointing `server.host` at an attacker while `auth.passwordEnv` names the machine's real credential env var → SASL PLAIN exfiltration). But the cure over-reached: *which IRC world a project lives in is project policy, not machine policy*, and the single global config cannot express "three projects on irc1, one on irc2, one not on IRC at all" — with a global file present, every project connects, and there is no per-project off-switch. A repo already shapes the agent far more than any endpoint it could name (AGENTS.md, code, test scripts); the one thing an endpoint choice must never control is where credentials are sent.
+
+**Design — split by what a thing is, not by suspicion:**
+
+- **Global file owns the machine's IRC worlds, once per server** (`servers` registry): name → `{ host, port, tls, tlsInsecure, tlsCaFile, tlsServerName, passwordEnv, auth }`. Credentials are endpoint-bound: they travel with their registry entry and nowhere else. `defaultServer` names the world projects land in when they say nothing.
+- **Project file owns participation and policy**: `server` (a *name* from the registry, or `"off"`), plus full `channels`, `capabilities`, `delivery` (including `wakeOnChannel` and wake trust), `nick`, `history`, `slug`. This also retires the machine-wide-capabilities workaround from the specialist-bench discussion — per-project `wakeOnChannel` is the natural home.
+- **Hard invariants**: projects cannot invent endpoints (name indirection only — no `host`), cannot set `auth`/`tlsInsecure`/`tlsCaFile` (warning + ignore), cannot define the `servers` registry. Unknown server name fails loudly (ConfigError listing known names) rather than silently disconnecting a project. `"off"` disables the extension for that project with one log line.
+- **Legacy**: a top-level `server` object + `auth` in the global file still works — it becomes the implicit `default` registry entry (one-time deprecation warning). Mixing `servers` and top-level `server` is a config error.
+
+**Not allowed, ever, in a project file**: `auth` blocks, raw endpoints (`host`/`port`), TLS trust overrides. The name indirection is what makes "project chooses server" safe.
+
+**Migration**: v0.5.0; no breaking change for existing single-server configs. `PiIrcConfig` gains `serverName` (provenance for status display); resolved `auth` stays top-level in the merged config so the session layer is untouched.
+
+**Testing**: registry resolution and per-project picks; `"off"` and absent-with-no-default; unknown name; project `auth`/`servers`/host-object rejection; legacy implicit-default migration; delivery-from-project now legal (revises the P15-a test that asserted rejection); per-project delivery independence.
+
+**Record (v0.5.0).** Shipped in `lib/config.ts`: `parseServerEntry` (per-world endpoint + credential binding, rejects `tlsCaFile`+`tlsInsecure` together, resolves `~`), `resolveServerRef` (name → registry entry; `"off"` → disabled; unknown name → ConfigError listing known names), legacy top-level `server`/`auth` → implicit `default` entry with deprecation warning, `servers`+top-level `server` mix rejected. Project files honor `server` by name only; `auth`/`servers`/object-form `server` are ignored with a warning and admin-owned sections keep machine defaults. Per-project `delivery` (incl. `wakeOnChannel`, wake trust), `nick`, `channels`, `capabilities`, `history`, `slug` all legal in project files now. Config validation has its own test module (25 tests); suite 268/268, tsc clean; `docs/example.pi-irc.json` demonstrates registry + per-project picks and parses through the real loader.
 ## Terms
+
 
 | Term | Meaning |
 |---|---|

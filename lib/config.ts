@@ -1,15 +1,18 @@
 /**
  * pi-irc configuration: `~/.pi/agent/pi-irc.json` (admin-owned) merged with
- * `<project>/.pi/pi-irc.json` (project overrides), validated loudly with the
+ * `<project>/.pi/pi-irc.json` (project policy), validated loudly with the
  * offending key. A missing global file disables the extension (one log line);
  * a missing project file is normal.
  *
- * Trust boundary: the project file is only as trustworthy as its repo.
- * `server`, `auth`, `nick`, and `delivery` (identity, transport, wake trust)
- * are GLOBAL-ONLY — project settings there are ignored with a warning.
- * Project files shape participation: `channels`, `capabilities`, `history`,
- * `slug`. Merge order: defaults ← global ← project (allowed sections only),
- * shallow per section; arrays replace (never concatenate — a project's
+ * Trust boundary (P19): the project file is only as trustworthy as its repo.
+ * The admin's global file owns the machine's IRC worlds — the `servers`
+ * registry mapping names to endpoints, credentials, and TLS trust; projects
+ * pick a world *by name* (or `"off"`) and shape participation: `channels`,
+ * `capabilities`, `delivery` (wake trust included), `nick`, `history`,
+ * `slug`. A repo can choose which admin-declared server it lives on, never
+ * invent an endpoint or point credentials anywhere. Merge order:
+ * defaults ← global ← project (allowed sections only), shallow per section;
+ * arrays replace (never concatenate — a project's smaller list is the point).
  */
 
 import * as fs from "node:fs";
@@ -101,6 +104,8 @@ export interface DeliveryConfig {
 }
 
 export interface PiIrcConfig {
+	/** Registry name this session connected through (status display). */
+	serverName?: string;
 	server: ServerConfig;
 	/** SASL PLAIN identity — omit for anonymous local servers. */
 	auth?: AuthConfig;
@@ -440,15 +445,13 @@ export function loadConfig(opts: {
 	}
 
 	const slugOverride = [project.slug, global.slug].find((s) => s !== undefined);
-	// Trust boundary: a project file lives in the repo and is only as
-	// trustworthy as the repo. Identity, transport, and trust settings
-	// (server, nick,  auth) come from the admin's global file
-	// alone; project files may only shape channel participation and
-	// catch-up ( capabilities, history, slug).
-	const PROJECT_ALLOWED = new Set(["channels", "capabilities", "history"]);
+
+	// P19 trust boundary: endpoints, credentials, and TLS trust live in the
+	// admin's registry; a project picks a world by name and shapes policy.
+	const PROJECT_ALLOWED = new Set(["nick", "channels", "capabilities", "delivery", "history", "slug"]);
 	const merged: Json = {};
 
-	for (const section of ["server", "nick", "channels", "capabilities", "delivery", "history"] as const) {
+	for (const section of ["nick", "channels", "capabilities", "delivery", "history"] as const) {
 		const g = global[section];
 		const p = project[section];
 
@@ -469,20 +472,100 @@ export function loadConfig(opts: {
 		merged[section] = { ...g, ...p };
 	}
 
-	// auth was never part of the merge (a P14 finding): it is global-only.
-	if (global.auth !== undefined) {
-		if (!isJsonObject(global.auth)) {
-			throw new ConfigError("auth", "expected an object");
-		}
-
-		merged.auth = global.auth;
+	if (project.servers !== undefined) {
+		console.warn('pi-irc: ignoring "servers" in project config — the registry is admin-owned');
 	}
 
 	if (project.auth !== undefined) {
-		console.warn('pi-irc: ignoring "auth" in project config — admin-owned, set it in the global config');
+		console.warn('pi-irc: ignoring "auth" in project config — credentials live in the global servers registry');
 	}
 
-	const server = section(merged, "server");
+	// --- The servers registry (admin-owned) ---
+	if (global.servers !== undefined && !isJsonObject(global.servers)) {
+		throw new ConfigError("servers", "expected an object mapping names to server entries");
+	}
+
+	if (global.servers !== undefined && global.server !== undefined) {
+		throw new ConfigError('servers', 'use either the "servers" registry or the top-level "server" — not both');
+	}
+
+	if (global.servers !== undefined && global.auth !== undefined) {
+		throw new ConfigError("auth", 'with a "servers" registry, auth lives inside its server entry');
+	}
+
+	const registry = new Map<string, Json>();
+
+	if (global.servers !== undefined) {
+		for (const [name, entry] of Object.entries(global.servers)) {
+			if (!isJsonObject(entry)) {
+				throw new ConfigError(`servers.${name}`, "expected an object");
+			}
+
+			registry.set(name, entry);
+		}
+	} else if (global.server !== undefined || global.auth !== undefined) {
+		// Legacy single-server form: the implicit "default" world.
+		if (global.server !== undefined && !isJsonObject(global.server)) {
+			throw new ConfigError("server", "expected an object");
+		}
+
+		const legacy: Json = global.server !== undefined ? { ...global.server } : {};
+
+		if (global.auth !== undefined) {
+			if (!isJsonObject(global.auth)) {
+				throw new ConfigError("auth", "expected an object");
+			}
+
+			legacy.auth = global.auth;
+		}
+
+		registry.set("default", legacy);
+		console.warn('pi-irc: top-level "server"/"auth" is deprecated — name your worlds under "servers" and point projects at them');
+	}
+
+	if (registry.size === 0) {
+		throw new ConfigError("servers", 'no servers defined — add entries to the "servers" registry in the global config');
+	}
+	// --- Which world does this project live in? ---
+	let pick: string | undefined;
+
+	if (project.server !== undefined) {
+		if (isJsonObject(project.server)) {
+			console.warn('pi-irc: ignoring "server" object in project config — use a server NAME from the global "servers" registry');
+		} else if (project.server === "off") {
+			console.log('pi-irc: disabled for this project (server: "off")');
+
+			return null;
+		} else {
+			pick = str("server", project.server);
+		}
+	}
+
+	if (pick === undefined && global.defaultServer !== undefined) {
+		pick = str("defaultServer", global.defaultServer);
+	}
+
+	if (pick === undefined && registry.size === 1) {
+		// Single-world machines need no defaultServer.
+		[pick] = registry.keys();
+	}
+
+	const entry = pick !== undefined ? registry.get(pick) : undefined;
+
+	if (pick !== undefined && entry === undefined) {
+		const known = [...registry.keys()].join(", ") || "(none)";
+
+		throw new ConfigError("server", `unknown server name "${pick}" — known: ${known}`);
+	}
+
+	if (entry === undefined) {
+		throw new ConfigError(
+			"defaultServer",
+			'no server for this project — set "server" in the project config or "defaultServer" in the global config',
+		);
+	}
+
+	const server = entry;
 	const nick = section(merged, "nick");
 	const channels = section(merged, "channels");
 	const capabilities = section(merged, "capabilities");
@@ -498,7 +581,7 @@ export function loadConfig(opts: {
 	const host = server.host !== undefined ? str("server.host", server.host) : undefined;
 
 	if (host === undefined) {
-		throw new ConfigError("server.host", "required and admin-owned (set it in the global config)");
+		throw new ConfigError("server.host", "required inside its servers registry entry");
 	}
 
 	const passwordEnv = server.passwordEnv !== undefined ? str("server.passwordEnv", server.passwordEnv) : undefined;
@@ -515,7 +598,7 @@ export function loadConfig(opts: {
 	}
 
 	let auth: AuthConfig | undefined;
-	const authRaw = isJsonObject(merged.auth) ? merged.auth : undefined;
+	const authRaw = isJsonObject(server.auth) ? server.auth : undefined;
 
 	if (authRaw !== undefined) {
 		const password = authRaw.password !== undefined ? str("auth.password", authRaw.password) : undefined;
@@ -532,8 +615,8 @@ export function loadConfig(opts: {
 			...(password !== undefined ? { password } : { passwordEnv: authPasswordEnv }),
 		};
 	}
-
 	const config: PiIrcConfig = {
+		...(pick !== undefined ? { serverName: pick } : {}),
 		server: {
 			host,
 			port: int("server.port", server.port ?? DEFAULTS.server.port, 1, 65535),
