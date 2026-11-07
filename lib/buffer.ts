@@ -138,6 +138,13 @@ export class MessageBuffer {
 	 * advances only contiguously past delivered messages; filtered-out or
 	 * limit-cut unread messages stay unread. An explicit `conv` drains
 	 */
+	/** P18: last `limit` messages of a conversation, oldest first, WITHOUT
+	 * touching cursors or delivery marks — read-only classifier context. */
+	recent(conv: string, limit: number): BufferedMessage[] {
+		const c = this.convs.get(conv.toLowerCase());
+		return c ? c.messages.slice(-limit) : [];
+	}
+
 	read(opts: ReadOptions = {}): BufferedMessage[] {
 		const limit = opts.limit ?? 200;
 		const targets = opts.conv ? [this.convs.get(opts.conv.toLowerCase())] : [...this.convs.values()];

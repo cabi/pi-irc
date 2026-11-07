@@ -270,6 +270,44 @@ test("genuinely broken configs still fail loudly", () => {
 
 test("delivery flood keys: defaults, clamping, project merge", () => {
 	const dir = tmpDir();
+
+test("wakeOnChannel: parsed with defaults when present", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", { server: { host: "irc.test" }, delivery: { wakeOnChannel: { channels: ["#lounge"], capabilities: "research" } } });
+	const config = loadConfig({ globalPath, projectDir: dir });
+	assert.deepEqual(config.delivery.wakeOnChannel, {
+		channels: ["#lounge"],
+		capabilities: "research",
+		classifier: "",
+		confidence: 0.5,
+		contextLines: 5,
+	});
+});
+
+test("wakeOnChannel: absent by default (channel traffic stays passive)", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", { server: { host: "irc.test" } });
+	const config = loadConfig({ globalPath, projectDir: dir });
+	assert.equal(config.delivery.wakeOnChannel, undefined);
+});
+
+test("wakeOnChannel: capabilities and channels are mandatory", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", {
+		server: { host: "irc.test" },
+		delivery: { wakeOnChannel: { channels: ["#lounge"] } },
+	});
+	expectConfigError(() => loadConfig({ globalPath, projectDir: dir }), "delivery.wakeOnChannel.capabilities");
+});
+
+test("wakeOnChannel: confidence must stay within 0–1", () => {
+	const dir = tmpDir();
+	const globalPath = writeConfig(dir, "global.json", {
+		server: { host: "irc.test" },
+		delivery: { wakeOnChannel: { channels: ["#lounge"], capabilities: "research", confidence: 1.5 } },
+	});
+	expectConfigError(() => loadConfig({ globalPath, projectDir: dir }), "delivery.wakeOnChannel.confidence");
+});
 	const globalPath = writeConfig(dir, "global.json", { server: { host: "irc.example.net" } });
 	const cfg = loadConfig({ globalPath, projectDir: "/work/My_Project" });
 	assert.equal(cfg.delivery.burst, 8);

@@ -83,6 +83,12 @@ export interface DeliveryConfig {
 	 * allowlist globs only. The allowlist applies in every tier.
 	 */
 	wakeTrust: "none" | "account" | "project";
+	/**
+	 * P18: per-agent channel wake. Each session classifies channel chatter
+	 * against its own `capabilities` and wakes itself — no central router.
+	 * Omit entirely to keep channel traffic as passive buffer content.
+	 */
+	wakeOnChannel?: WakeOnChannelConfig;
 	bufferMax: number;
 	wakeOnDirectMessage: boolean;
 	chunkLongSends: boolean;
@@ -318,6 +324,38 @@ function isWakeTrust(value: unknown): value is (typeof WAKE_TRUST_TIERS)[number]
 	return typeof value === "string" && WAKE_TRUST_SET.has(value);
 }
 
+/** Validated `delivery.wakeOnChannel` (P18). All fields defaulted; the
+ * object's presence alone enables channel wakes for the listed channels. */
+export interface WakeOnChannelConfig {
+	/** Participating channels; each must be a channel this session joins. */
+	channels: string[];
+	/** This agent's speciality in plain words — the classifier's only prompt. */
+	capabilities: string;
+	/** Classifier model id (`provider/model`); empty = first available classifier. */
+	classifier: string;
+	/** Calibrated-confidence floor for waking (0–1). */
+	confidence: number;
+	/** Preceding channel lines passed as context (0–20). */
+	contextLines: number;
+}
+
+function parseWakeOnChannel(key: string, value: unknown): WakeOnChannelConfig | undefined {
+	if (value === undefined) return undefined;
+	if (!isJsonObject(value)) throw new ConfigError(key, "expected an object");
+	if (!isNonEmptyString(value.capabilities)) {
+		throw new ConfigError(`${key}.capabilities`, "expected a non-empty string describing this agent's speciality");
+	}
+	const channels = channelList(`${key}.channels`, value.channels);
+	if (channels.length === 0) throw new ConfigError(`${key}.channels`, "expected at least one channel");
+	return {
+		channels,
+		capabilities: str(`${key}.capabilities`, value.capabilities),
+		classifier: isNonEmptyString(value.classifier) ? value.classifier : "",
+		confidence: value.confidence === undefined ? 0.5 : int(`${key}.confidence`, value.confidence, 0, 1),
+		contextLines: value.contextLines === undefined ? 5 : int(`${key}.contextLines`, value.contextLines, 0, 20),
+	};
+}
+
 function str(key: string, value: unknown): string {
 	if (!isNonEmptyString(value)) throw new ConfigError(key, "expected a non-empty string");
 
@@ -439,6 +477,7 @@ export function loadConfig(opts: {
 	const channels = section(merged, "channels");
 	const capabilities = section(merged, "capabilities");
 	const delivery = section(merged, "delivery");
+	const wakeOnChannel = parseWakeOnChannel("delivery.wakeOnChannel", delivery.wakeOnChannel);
 	const history = section(merged, "history");
 
 	const historyCatchup =
@@ -532,6 +571,7 @@ export function loadConfig(opts: {
 					? strList("delivery.wakeAllowNicks", delivery.wakeAllowNicks)
 					: DEFAULTS.delivery.wakeAllowNicks,
 			wakeTrust: isWakeTrust(delivery.wakeTrust) ? delivery.wakeTrust : DEFAULTS.delivery.wakeTrust,
+			...(wakeOnChannel !== undefined ? { wakeOnChannel } : {}),
 		},
 		history: { catchupLimit: historyCatchup },
 		projectSlug: isNonEmptyString(slugOverride)

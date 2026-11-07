@@ -64,11 +64,40 @@ export interface SessionDeps {
 	transport?: Transport;
 	now?: () => number;
 	/**
+	 * P18 classifier backend for `delivery.wakeOnChannel`. Production wires
+	 * this to pi's models API (index.ts); tests inject a deterministic fake.
+	 */
+	classifier?: ChannelClassifier;
+	/**
 	 * Reconnect policy. Default for socket-backed sessions: fresh IrcSocket
 	 * per attempt + the server password captured at first connect. Injected
 	 * clients only reconnect when a spec is provided explicitly.
 	 */
 	reconnect?: Partial<ReconnectSpec>;
+}
+
+/** P18: one wake-or-not judgment about a channel line, made by this session
+ * for its own capabilities (no central router). */
+export type ChannelClassifier = (input: {
+	/** Channel the line appeared in (`#name`). */
+	channel: string;
+	/** Nick of the sender. */
+	from: string;
+	/** The line itself. */
+	text: string;
+	/** Recent preceding lines (`nick: text`), oldest first — classifier context. */
+	context: string[];
+	/** This agent's speciality, verbatim from config — the only prompt. */
+	capabilities: string;
+}) => Promise<ChannelWakeVerdict>;
+
+/** P18 classifier result. `ok: false` = backend error → fail closed (no wake). */
+export interface ChannelWakeVerdict {
+	ok: boolean;
+	/** Calibrated confidence that this line is my business (0–1). */
+	confidence: number;
+	/** Set when ok is false: backend error description (log/buffer only). */
+	error?: string;
 }
 
 export interface ReconnectSpec {
@@ -153,6 +182,8 @@ export class IrcSession extends EventEmitter {
 	readonly buffer: MessageBuffer;
 	readonly delivery: DeliveryQueue;
 	private readonly now: () => number;
+	/** P18: optional classifier for channel wakes (see SessionDeps). */
+	readonly classifier?: ChannelClassifier;
 	readonly #reconnect: ReconnectSpec | null;
 	readonly #backoff: Backoff;
 	#cancelScheduled: (() => void) | null = null;
@@ -184,6 +215,7 @@ export class IrcSession extends EventEmitter {
 		client: IrcClient,
 		now: () => number,
 		reconnect: ReconnectSpec | null,
+		classifier?: ChannelClassifier,
 	) {
 		super();
 		this.config = config;
@@ -191,6 +223,7 @@ export class IrcSession extends EventEmitter {
 		this.projectChannel = renderChannelName(config.channels.projectTemplate, config.projectSlug);
 		this.client = client;
 		this.now = now;
+		this.classifier = classifier;
 		this.#reconnect = reconnect;
 		this.#historyLimit = config.history?.catchupLimit ?? 0;
 		this.#backoff = new Backoff(reconnect?.backoff);
@@ -272,7 +305,7 @@ export class IrcSession extends EventEmitter {
 				: null
 			: { transportFactory: () => new IrcSocket(), password, ...deps.reconnect };
 
-		const session = new IrcSession(config, identity, client, now, reconnect);
+		const session = new IrcSession(config, identity, client, now, reconnect, deps.classifier);
 
 		// Join the project channel (+ any extra defaults). The channel is
 		// created by the server on first JOIN — nothing else to bootstrap.
@@ -367,10 +400,11 @@ export class IrcSession extends EventEmitter {
 			const at = ts !== undefined && Number.isFinite(ts) ? ts : undefined;
 
 			if (/^[#&+!]/.test(e.target)) {
-				// Channel chatter: buffer under the channel, never wake.
-				this.buffer.push({ conv: e.target, from: e.from, text: e.text, ...(at ? { ts: at } : {}) });
-				this.roster.touch(e.from);
-			} else if (!e.toSelf) {
+			// Channel chatter: buffer under the channel; P18 may wake below.
+			this.buffer.push({ conv: e.target, from: e.from, text: e.text, ...(at ? { ts: at } : {}) });
+			this.roster.touch(e.from);
+			if (!replay) void this.#maybeChannelWake(e.target, e.from, e.text);
+		} else if (!e.toSelf) {
 				// DM to us: envelopes first, plain text second.
 				const env = parseEnvelope(e.text);
 
@@ -755,6 +789,53 @@ export class IrcSession extends EventEmitter {
 		if (now - this.lastWakeAt < WAKE_QUIET_MS) return;
 		this.lastWakeAt = now;
 		this.emit("wake", { from, text });
+	}
+
+	/**
+	 * P18: per-agent channel wake. Deterministic gates run first and always:
+	 * config scope, own-line skip, sender trust (P17 tiers — the classifier
+	 * can never make an untrusted sender wakeable), and the shared quiet
+	 * window. A direct nick mention then wakes without a classifier call
+	 * (deterministic addressing); everything else asks the classifier to
+	 * judge the line against OUR capabilities — no central router. The
+	 * classifier is fail-closed: errors and low confidence never wake.
+	 */
+	async #maybeChannelWake(channel: string, from: string, text: string): Promise<void> {
+		const cfg = this.config.delivery.wakeOnChannel;
+		if (cfg === undefined) return;
+		if (!cfg.channels.some((c) => c.toLowerCase() === channel.toLowerCase())) return;
+		const me = this.client.realNick ?? this.client.nick;
+		if (from.toLowerCase() === me.toLowerCase()) return;
+		let via = "mention";
+		// Trust gate first, unconditionally: an untrusted sender cannot wake
+		// this session by mentioning it any more than by DMing it.
+		if (!this.#wakeTrusted(from)) return;
+		if (!text.toLowerCase().includes(me.toLowerCase())) {
+			via = "classifier";
+			if (this.now() - this.lastWakeAt < WAKE_QUIET_MS) return;
+			if (this.classifier === undefined) return;
+			const context = this.buffer.recent(channel, cfg.contextLines).map((m) => `${m.from}: ${m.text}`);
+			let verdict: ChannelWakeVerdict;
+			try {
+				verdict = await this.classifier({ channel, from, text, context, capabilities: cfg.capabilities });
+			} catch (err) {
+				verdict = { ok: false, confidence: 0, error: err instanceof Error ? err.message : String(err) };
+			}
+			if (!verdict.ok) {
+				console.warn(`pi-irc: channel-wake classifier failed (no wake): ${verdict.error ?? "?"}`);
+				return;
+			}
+			if (verdict.confidence < cfg.confidence) return;
+		}
+		if (this.now() - this.lastWakeAt < WAKE_QUIET_MS) return;
+		this.lastWakeAt = this.now();
+		this.buffer.push({
+			conv: channel,
+			from,
+			text: `(wake via ${via}: ${from}'s line matched this session's channel-wake config)`,
+			kind: "system",
+		});
+		this.emit("wake", { from, text: `${from} in ${channel}: ${text}` });
 	}
 
 	/**

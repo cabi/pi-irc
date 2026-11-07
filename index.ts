@@ -13,7 +13,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { loadConfig } from "./lib/config.ts";
 import type { IdentityContext } from "./lib/identity.ts";
-import { IrcSession } from "./lib/session.ts";
+import { IrcSession, type ChannelClassifier } from "./lib/session.ts";
 import { IRC_SUBCOMMANDS, runIrcCommand } from "./lib/commands.ts";
 import { executeIrcOp, IRC_OPS, type IrcToolParams } from "./lib/tool.ts";
 import { errorMessage } from "./lib/errors.ts";
@@ -38,6 +38,83 @@ function identityFrom(cwd: string, sessionId: string): IdentityContext {
 		parentId: role === "sub" ? process.env.PI_IRC_PARENT?.slice(0, 8) : undefined,
 	};
 }
+/** P18 classifier backend: rides pi's model registry (the user's configured
+ * providers — typesafe/openrouter/opencode/…), so pi-irc owns no keys and
+ * no HTTP. Fail-closed: lookup errors and stopReason !== "stop" mean no wake. */
+function makeChannelClassifier(registry: ModelRegistryLike, modelId: string): ChannelClassifier {
+	return async (input) => {
+		try {
+			const model = await resolveClassifier(registry, modelId);
+			if (!model) return { ok: false, confidence: 0, error: `classifier model unavailable (${modelId || "any"})` };
+			const result = await registry.classify(model, {
+				state: {
+					channel: input.channel,
+					from: input.from,
+					line: input.text,
+					recentLines: input.context,
+					myCapabilities: input.capabilities,
+				},
+				questions: {
+					wake: {
+						type: "bool",
+						instructions: "Should an assistant with these capabilities be woken to act on this channel line?",
+						criteria: {
+							true: "The line needs this assistant's speciality — waking it adds clear value",
+							false: "Nothing here needs this assistant; let it sleep",
+						},
+					},
+				},
+			});
+			if (result.stopReason !== "stop") {
+				return { ok: false, confidence: 0, error: result.errorMessage ?? result.stopReason };
+			}
+			const answer = result.answers.wake;
+			if (answer?.type !== "bool" || typeof answer.probability !== "number") {
+				return { ok: false, confidence: 0, error: "classifier returned no bool probability" };
+			}
+			return { ok: true, confidence: answer.probability };
+		} catch (err) {
+			return { ok: false, confidence: 0, error: err instanceof Error ? err.message : String(err) };
+		}
+	};
+}
+
+/** `provider/model` from config → registry model; empty id → first available. */
+async function resolveClassifier(
+	registry: ModelRegistryLike,
+	modelId: string,
+): Promise<ClassifierModelInfo | undefined> {
+	if (!modelId) return (await registry.getAvailableOfType("classifier"))[0];
+	const slash = modelId.indexOf("/");
+	if (slash <= 0) return undefined;
+	return registry.getModelOfType("classifier", modelId.slice(0, slash), modelId.slice(slash + 1));
+}
+
+interface ClassifierModelInfo {
+	provider: string;
+	id: string;
+}
+
+/** Structural slice of pi's model registry — only what the classifier needs. */
+interface ModelRegistryLike {
+	getAvailableOfType(type: "classifier"): Promise<ClassifierModelInfo[]>;
+	getModelOfType(
+		type: "classifier",
+		provider: string,
+		id: string,
+	): Promise<ClassifierModelInfo | undefined> | ClassifierModelInfo | undefined;
+	classify(
+		model: ClassifierModelInfo,
+		context: {
+			state: Record<string, unknown>;
+			questions: Record<string, { type: "bool"; instructions: string; criteria: { true: string; false: string } }>;
+		},
+	): Promise<{
+		answers: Record<string, { type: string; probability?: number }>;
+		stopReason: "stop" | "error" | "aborted";
+		errorMessage?: string;
+	}>;
+}
 
 export default function (pi: ExtensionAPI) {
 	const config = loadConfig({
@@ -59,8 +136,8 @@ export default function (pi: ExtensionAPI) {
 	let booting: Promise<IrcSession> | null = null;
 	let session: IrcSession | null = null;
 	let lastSessionId = "";
+	let classifier: ChannelClassifier | undefined;
 	let notify: (message: string, type?: "info" | "warning" | "error") => void = () => {};
-
 	/** Busy presence mirrors the host agent's run state (AWAY while mid-run). */
 	let busy = false;
 
@@ -72,14 +149,14 @@ export default function (pi: ExtensionAPI) {
 
 		if (booting && sid === lastSessionId) return booting;
 		lastSessionId = sid;
-		booting = IrcSession.connect(config, identityFrom(ctx.cwd, sid))
+		booting = IrcSession.connect(config, identityFrom(ctx.cwd, sid), { classifier })
 			.then((s) => {
 				session = s;
-				// DM-wake: steer this session with the buffered DM so the
-				// agent answers humans without polling.
+				// Wake steer (DM or channel): hand the line to the agent so it
+				// answers humans/peers without polling.
 				s.on("wake", (w) => {
 					pi.sendUserMessage(
-						`[irc] direct message from ${w.from}: ${w.text}\n(unread: ${w.unread} total — reply via the irc tool: op=send, target=${w.from}, or op=read)`,
+						`[irc] message from ${w.from}: ${w.text}\n(reply via the irc tool — op=send, or op=read for backlog)`,
 						{ deliverAs: "steer" },
 					);
 				});
@@ -99,6 +176,12 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", (event, ctx) => {
 		notify = ctx.ui.notify.bind(ctx.ui);
 		const sid = ctx.sessionManager.getSessionId();
+		// P18: the session_start ctx carries the model registry — capture it
+		// for the channel-wake classifier (built lazily, only if configured).
+		const registry = (ctx as unknown as { modelRegistry?: ModelRegistryLike }).modelRegistry;
+		if (registry && config.delivery.wakeOnChannel) {
+			classifier = makeChannelClassifier(registry, config.delivery.wakeOnChannel.classifier);
+		}
 
 		// `reload` re-fires session_start for the same session: keep the
 		// live connection instead of reconnecting.

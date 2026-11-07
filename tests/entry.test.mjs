@@ -132,7 +132,7 @@ test("enabled: boots against mock server, serves tool ops, wakes on DM, quits on
 		srv.push(":carol!u@mock PRIVMSG pi-abcdef12 :status please");
 		await new Promise((r) => setTimeout(r, 50));
 		assert.equal(pi.userMessages.length, 1);
-		assert.match(pi.userMessages[0].content, /direct message from carol: status please/);
+		assert.match(pi.userMessages[0].content, /message from carol: status please/);
 		assert.equal(pi.userMessages[0].options?.deliverAs, "steer");
 
 		// /irc slash command rides the same session
