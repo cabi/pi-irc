@@ -252,3 +252,10 @@ test("ReplyAssembler: stale fragments expire (TTL) and floods evict (maxPending)
 	for (let k = 0; k < 6; k++) a.add("f", `fl${k}`, { i: 1, n: 99 }, "x");
 	assert.equal(a.pendingCount(), 4, `bounded: ${a.pendingCount()}`);
 });
+
+test("envelopeParts: multi-line bodies flatten to single-spaced prose (one DM = one envelope)", () => {
+	const parts = envelopeParts("reply", "deadbeef", "line one\r\n  line two  \n\nline three\n\0tail\0", 400);
+	assert.equal(parts.length, 1, "flattened body stays under one chunk");
+	assert.ok(!parts[0].includes("\r") && !parts[0].includes("\n"), "no line breaks cross the wire");
+	assert.match(parts[0], /line one line two line three tail/);
+});

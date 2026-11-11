@@ -25,7 +25,7 @@ function fakeSession(over = {}) {
 		send: (target, text) => {
 			state.sent.push([target ?? "#pi-proj", text]);
 
-			return { target: target ?? "#pi-proj", text, chunks: 1, pending: 0 };
+			return { target: target ?? "#pi-proj", text, messages: 1, lines: 1, truncated: 0, pending: 0 };
 		},
 		read: (o) => {
 			state.readCalls.push(o);
@@ -90,6 +90,23 @@ test("send defaults to the project channel", async () => {
 
 test("send without text fails fast", async () => {
 	await assert.rejects(() => executeIrcOp(ensureOf(fakeSession()), "send", { text: "   " }), /send requires text/);
+});
+
+test("send: reports channel-cap truncation loudly to the agent", async () => {
+	const s = fakeSession({
+		send: (target, text) => ({
+			target: target ?? "#pi-proj",
+			text,
+			messages: 11,
+			lines: 35,
+			truncated: 25,
+			pending: 0,
+		}),
+	});
+
+	const r = await executeIrcOp(ensureOf(s), "send", { text: "long paste" });
+	assert.match(r.content[0].text, /sent to #pi-proj/);
+	assert.match(r.content[0].text, /25 of 35 lines truncated \(channel cap\)/);
 });
 
 test("read formats channel lines and DM lines differently", async () => {

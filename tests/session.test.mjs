@@ -10,7 +10,7 @@ const { IrcSession } = await loadViaPi(repoFile("lib", "session.ts"));
 
 const { IrcClient } = await loadViaPi(repoFile("lib", "irc-client.ts"));
 
-const { wire } = await loadViaPi(repoFile("lib", "wire.ts"));
+const { wire, WireError } = await loadViaPi(repoFile("lib", "wire.ts"));
 
 /**
  * Fake IRC server: a scriptable Transport with a real IrcClient on top.
@@ -105,6 +105,8 @@ class FakeServer extends EventEmitter {
 }
 
 function makeConfig(over = {}) {
+	const { delivery = {}, ...channelsOver } = over;
+
 	return {
 		server: { host: "irc.example", port: 6667, tls: false },
 		nick: { template: "pi-{role}-{shortId}", maxLen: 30 },
@@ -113,10 +115,10 @@ function makeConfig(over = {}) {
 			defaults: [],
 			autoCreate: true,
 			topicTemplate: "pi {slug} — {date}",
-			...over,
+			...channelsOver,
 		},
 		capabilities: { request: [] },
-		delivery: { bufferMax: 50, wakeOnDirectMessage: true, chunkLongSends: true },
+		delivery: { bufferMax: 50, wakeOnDirectMessage: true, chunkLongSends: true, ...delivery },
 		projectSlug: "proj",
 	};
 }
@@ -288,6 +290,61 @@ test("send: defaults to project channel, drains immediately within burst", async
 	assert.equal(r.pending, 0, "burst covers one message");
 	await new Promise((res) => setImmediate(res));
 	assert.ok(srv.lines.some((l) => l === wire.privmsg("#pi-proj", "hello team")));
+	session.stop();
+});
+
+test("send: multi-line text reaches the channel as one PRIVMSG per line", async () => {
+	const { srv, session } = await boot();
+	const r = session.send(undefined, "first\r\nsecond\nthird");
+	assert.equal(r.messages, 3);
+	assert.equal(r.truncated, 0);
+	await new Promise((res) => setImmediate(res));
+
+	for (const line of ["first", "second", "third"]) {
+		assert.ok(
+			srv.lines.some((l) => l === wire.privmsg("#pi-proj", line)),
+			`one PRIVMSG for ${line}`,
+		);
+	}
+
+	session.stop();
+});
+
+test("send: channel line cap truncates past 10 lines with an in-channel marker", async () => {
+	const { srv, session } = await boot({ delivery: { burst: 20 } });
+	const lines = Array.from({ length: 12 }, (_, i) => `L${i + 1}`);
+	const r = session.send(undefined, lines.join("\n"));
+	assert.equal(r.lines, 12);
+	assert.equal(r.truncated, 2);
+	assert.equal(r.messages, 11);
+	await new Promise((res) => setImmediate(res));
+	assert.ok(
+		srv.lines.some((l) => l === wire.privmsg("#pi-proj", "L10")),
+		"kept lines up to the cap",
+	);
+	assert.ok(!srv.lines.some((l) => l.includes("L11") || l.includes("L12")), "cut lines never cross the wire");
+	assert.ok(
+		srv.lines.some((l) => l === wire.privmsg("#pi-proj", "(… 2 more lines truncated)")),
+		"marker names the cut",
+	);
+	session.stop();
+});
+
+test("send: a chunk that dies at drain surfaces in the buffer, not just the log", async () => {
+	const { srv, session } = await boot();
+	const orig = srv.send;
+	srv.send = (line) => {
+		if (line.startsWith("PRIVMSG")) throw new WireError("sendto: broken pipe");
+		orig(line);
+	};
+
+	session.send(undefined, "will fail");
+	await new Promise((res) => setImmediate(res));
+	const entries = session.buffer.recent("#pi-proj", 5);
+	assert.ok(
+		entries.some((e) => e.kind === "system" && /dropped unsendable message \(sendto: broken pipe\)/.test(e.text)),
+		`system entry present: ${JSON.stringify(entries)}`,
+	);
 	session.stop();
 });
 

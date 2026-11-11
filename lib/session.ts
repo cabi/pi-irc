@@ -118,7 +118,12 @@ const defaultSchedule = (fn: () => void, ms: number): (() => void) => {
 
 export interface SendResult {
 	target: string;
-	chunks: number;
+	/** PRIVMSGs queued for this send (every line's chunks, truncation marker included). */
+	messages: number;
+	/** Content lines after normalization, before the channel line cap. */
+	lines: number;
+	/** Lines cut by the channel line cap (always 0 for DM targets). */
+	truncated: number;
 	/** Chunks still waiting in the flood-limited queue. */
 	pending: number;
 }
@@ -242,8 +247,18 @@ export class IrcSession extends EventEmitter {
 			maxQueue: config.delivery.maxQueue,
 			chunkLong: config.delivery.chunkLongSends,
 		});
-		this.delivery.onDrop = (target, text, err) =>
+		this.delivery.onDrop = (target, text, err) => {
 			console.warn(`pi-irc: dropped unsendable chunk to ${target} (${err.message}): ${text.slice(0, 60)}…`);
+			// The send tool already reported success by drain-time rejection;
+			// the buffer entry is the sender's only chance to notice and retry.
+			this.buffer.push({
+				conv: target,
+				from: "system",
+				text: `dropped unsendable message (${err.message}): ${text.slice(0, 60)}`,
+				kind: "system",
+			});
+		};
+
 		this.#wireEvents();
 		this.delivery.start();
 		this.#rosterSweep = setInterval(() => this.roster.expire(ROSTER_TTL_MS), ROSTER_SWEEP_MS);
@@ -981,10 +996,10 @@ export class IrcSession extends EventEmitter {
 
 	send(target: string | undefined, text: string): SendResult {
 		const to = this.resolveTarget(target ?? this.projectChannel);
-		const chunks = this.delivery.enqueue(to, text);
+		const { messages, lines, truncated } = this.delivery.enqueue(to, text);
 		this.delivery.drain();
 
-		return { target: to, chunks, pending: this.delivery.pending() };
+		return { target: to, messages, lines, truncated, pending: this.delivery.pending() };
 	}
 
 	/**

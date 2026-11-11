@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.2 - 2026-11-08
+
+Multi-line sends reach IRC; nothing silent on the way out.
+
+- Every send is normalized to wire-legal lines at enqueue (P21): CR/LF/CRLF split into one PRIVMSG per content line, NULs stripped, trailing whitespace trimmed, blank lines dropped. Whitespace-only input fails loudly at `send` time — previously a multi-line send reported success and then silently died in `formatLine`'s CR/LF guard at drain
+- Channel sends cap at 10 content lines (product cap against pasted-log noise, not a server rule; `channelLineCap` option, 0 disables): the channel gets a final `(… N more lines truncated)` marker and the tool result tells the agent exactly what was cut. DMs are uncapped
+- Ask/reply envelope bodies flatten to single-spaced prose (one DM = one envelope); chunk boundaries never end on a space, so multi-part replies still reassemble byte-exact
+- Chunks rejected as permanently unsendable at drain (WireError) now buffer a visible `system` entry in the target conversation — no more silent post-success loss
+- `send` reports `{messages, lines, truncated, pending}` (was `{chunks, pending}`)
+
 ## 0.6.1 - 2026-11-07
 
 Simple nicks, honest sub identity.

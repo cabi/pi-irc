@@ -142,7 +142,13 @@ export async function executeIrcOp(
 
 			const r = session.send(params.target, params.text);
 			const where = r.target === session.projectChannel ? `${r.target} (project channel)` : r.target;
-			const tail = r.chunks > 1 ? ` (split into ${r.chunks} chunks)` : "";
+			const bits: string[] = [];
+
+			if (r.messages > 1) bits.push(`${r.messages} messages`);
+
+			if (r.truncated > 0) bits.push(`${r.truncated} of ${r.lines} lines truncated (channel cap)`);
+
+			const tail = bits.length > 0 ? ` (${bits.join(", ")})` : "";
 			const queued = r.pending > 0 ? ` [${r.pending} queued behind flood limit]` : "";
 
 			return text(`sent to ${where}${tail}${queued}`, r);

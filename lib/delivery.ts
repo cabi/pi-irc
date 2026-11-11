@@ -1,7 +1,8 @@
 /**
  * Delivery: outbound send queue with IRC flood control and long-message
  * chunking. The session layer enqueues intent ("say this to that target");
- * the queue paces the wire.
+ * the queue shapes each intent into wire-legal messages (NUL-stripped, one
+ * per content line — see normalizeLines) and paces them onto the wire.
  *
  * Flood model — the classic client-side penalty bucket: up to `burst`
  * messages go out immediately, then one message per `intervalMs`. This
@@ -26,8 +27,10 @@ export interface DeliveryOptions {
 	/** Max length per chunk when chunking is on. */
 	maxChunk?: number;
 	/** Chunk messages longer than maxChunk (delivery.chunkLongSends). */
-	/** Chunk messages longer than maxChunk (delivery.chunkLongSends). */
 	chunkLong?: boolean;
+	/** Max content lines per send to a channel target (product cap against
+	 * pasted-log noise, not a server rule); 0 disables. DMs are uncapped. */
+	channelLineCap?: number;
 	/** Upper bound on queued chunks; enqueue beyond it throws (backpressure). */
 	maxQueue?: number;
 }
@@ -118,6 +121,48 @@ function byteLength(s: string): number {
 	return bytes;
 }
 
+/** What enqueue queued. `messages` counts PRIVMSGs (every line's chunks
+ * plus a truncation marker if the channel cap cut anything); `lines` is
+ * content lines after normalization, before the cap; `truncated` is the
+ * lines the cap cut. */
+export interface EnqueueResult {
+	messages: number;
+	lines: number;
+	truncated: number;
+}
+
+/** Default per-send line cap for channel targets — a product cap against
+ * pasted-log noise (a 100-line paste paced at 1 msg/s fills a shared
+ * channel for minutes), not a server rule. DM targets are uncapped. */
+export const DEFAULT_CHANNEL_LINE_CAP = 10;
+
+/**
+ * Split outbound text into wire-legal content lines. NULs are stripped
+ * (always an encoding accident, invisible everywhere); CR, LF, and CRLF
+ * break lines; trailing whitespace is trimmed per line while leading
+ * whitespace — code indentation — survives; blank lines are dropped.
+ * Throws when nothing survives, so a whitespace-only send fails loudly
+ * at enqueue instead of draining an empty queue.
+ */
+export function normalizeLines(text: string): string[] {
+	const lines = text
+		.replaceAll("\0", "")
+		.split(/\r\n|\r|\n/)
+		.map((line) => line.replace(/\s+$/, ""))
+		.filter((line) => line.length > 0);
+
+	if (lines.length === 0) {
+		throw new Error("message is empty after line normalization (only blank lines or NULs)");
+	}
+
+	return lines;
+}
+
+/** Channel target per RFC 2812 §1.3 (the same # + & set wire.join validates). */
+function isChannelTarget(target: string): boolean {
+	return /^[#&+]/.test(target);
+}
+
 export class DeliveryQueue {
 	/** Optional sink notified when a chunk is dropped as unsendable. */
 	onDrop?: (target: string, text: string, err: Error) => void;
@@ -142,36 +187,45 @@ export class DeliveryQueue {
 			intervalMs: opts.intervalMs ?? 2000,
 			maxChunk: opts.maxChunk ?? 400,
 			chunkLong: opts.chunkLong ?? true,
+			channelLineCap: opts.channelLineCap ?? DEFAULT_CHANNEL_LINE_CAP,
 			maxQueue: opts.maxQueue ?? 512,
 		};
 		this.tokens = this.opts.burst;
 	}
-	/** Queue a message; returns the number of chunks it was split into.
-	 * Throws when the queue is at maxQueue chunks — backpressure surfaces to
-	 * the caller instead of unbounded memory growth. */
-	enqueue(target: string, text: string): number {
-		const queued = this.pending() + 1; // ≥1 chunk for this item after split
+	/** Queue one send as wire-legal messages (see normalizeLines; channel
+	 * targets cap at channelLineCap content lines with an in-channel
+	 * truncation marker). Throws on input that normalizes to nothing and
+	 * when the queue is at maxQueue chunks — backpressure surfaces to the
+	 * caller instead of unbounded memory growth. */
+	enqueue(target: string, text: string): EnqueueResult {
+		const lines = normalizeLines(text);
+		let send = lines;
+		let truncated = 0;
 
-		if (this.opts.chunkLong) {
-			const chunks = chunkText(text, this.opts.maxChunk);
-
-			if (this.pending() + chunks.length > this.opts.maxQueue) {
-				throw new Error(`delivery queue full (${this.pending()} chunks queued, max ${this.opts.maxQueue})`);
-			}
-
-			const n = chunks.length;
-			this.queue.push({ target, chunks, part: n > 1 ? { i: 0, n } : null, nextIndex: 0 });
-
-			return n;
+		if (this.opts.channelLineCap > 0 && isChannelTarget(target) && lines.length > this.opts.channelLineCap) {
+			truncated = lines.length - this.opts.channelLineCap;
+			send = [
+				...lines.slice(0, this.opts.channelLineCap),
+				`(… ${truncated} more line${truncated === 1 ? "" : "s"} truncated)`,
+			];
 		}
 
-		if (queued > this.opts.maxQueue) {
+		const chunked = this.opts.chunkLong
+			? send.map((line) => chunkText(line, this.opts.maxChunk))
+			: send.map((line) => [line]);
+
+		const messages = chunked.reduce((n, chunks) => n + chunks.length, 0);
+
+		if (this.pending() + messages > this.opts.maxQueue) {
 			throw new Error(`delivery queue full (${this.pending()} chunks queued, max ${this.opts.maxQueue})`);
 		}
 
-		this.queue.push({ target, chunks: [text], part: null, nextIndex: 0 });
+		for (const chunks of chunked) {
+			const n = chunks.length;
+			this.queue.push({ target, chunks, part: n > 1 ? { i: 0, n } : null, nextIndex: 0 });
+		}
 
-		return 1;
+		return { messages, lines: lines.length, truncated };
 	}
 
 	/**

@@ -106,15 +106,36 @@ export function envelopeParts(
 	maxChunk: number,
 	timeoutSec?: number,
 ): string[] {
+	// The envelope is line-framed (one DM = one envelope; CR/LF would
+	// corrupt parsing), so a multi-line body flattens to single spaces:
+	// each line is trimmed, blank lines vanish, lines join with " ".
+	const flat = body
+		.replaceAll("\0", "")
+		.split(/\r\n|\r|\n/)
+		.map((line) => line.trim())
+		.filter((line) => line.length > 0)
+		.join(" ");
+
 	// Budget for the longest prefix any part can carry (i and n have at most
 	// maxDigits digits each; ask adds " timeout=99999").
-	const digits = Math.max(2, String(Math.ceil(body.length / Math.max(8, maxChunk - 64))).length);
+	const digits = Math.max(2, String(Math.ceil(flat.length / Math.max(8, maxChunk - 64))).length);
 	const budget = prefixBudget(id, kind, digits) + (kind === "ask" ? " timeout=99999".length : 0) + 8;
 	const room = Math.max(24, maxChunk - budget);
-	const raw = splitLossless(body, room);
+	const raw = splitLossless(flat, room);
+
+	// Delivery trims trailing whitespace per line (wire hygiene), so a chunk
+	// ending in a space would silently lose it and corrupt lossless
+	// reassembly — push boundary spaces onto the next chunk's head, where
+	// leading whitespace survives.
+	for (let i = 0; i < raw.length - 1; i++) {
+		while (raw[i].endsWith(" ")) {
+			raw[i + 1] = ` ${raw[i + 1]}`;
+			raw[i] = raw[i].slice(0, -1);
+		}
+	}
 
 	if (raw.length === 1) {
-		return [kind === "ask" ? formatAsk(id, timeoutSec ?? 600, body) : formatReply(id, body)];
+		return [kind === "ask" ? formatAsk(id, timeoutSec ?? 600, flat) : formatReply(id, flat)];
 	}
 
 	return raw.map((chunk, idx) =>

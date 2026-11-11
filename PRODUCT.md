@@ -108,15 +108,15 @@ All later agents of the project run the same flow and simply land in the existin
 
 ## The `irc` tool (agent surface)
 
-| Op              | Returns / does                                                                                   | Prepared by                            |
-| --------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------- |
-| `connect`       | Ensures connection + registration + joins; idempotent no-op when up                              | usually already done at session start  |
-| `status`        | My nick & role, project channel, joined channels, connection state, unread counts                | background state, zero round-trips     |
-| `roster`        | Project-channel members: agent (project, main/sub, session, model) or human; online vs last-seen | NAMES + WHO(X) + join/part/quit stream |
-| `send`          | Message a channel (default: project channel) or a nick (DM); chunked, flood-limited              | send queue with rate limiting          |
-| `read`          | Unread messages since cursor (from/since/channel filters), advances cursor                       | ring buffer                            |
-| `join` / `part` | Extra channels on demand; the project channel cannot be parted                                   | channel state                          |
-| `help`          | Op reference with current context (nick, channels)                                               | —                                      |
+| Op              | Returns / does                                                                                                                                        | Prepared by                            |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| `connect`       | Ensures connection + registration + joins; idempotent no-op when up                                                                                   | usually already done at session start  |
+| `status`        | My nick & role, project channel, joined channels, connection state, unread counts                                                                     | background state, zero round-trips     |
+| `roster`        | Project-channel members: agent (project, main/sub, session, model) or human; online vs last-seen                                                      | NAMES + WHO(X) + join/part/quit stream |
+| `send`          | Message a channel (default: project channel) or a nick (DM); multi-line → one PRIVMSG per line, channel sends cap at 10 lines, chunked, flood-limited | send queue with rate limiting          |
+| `read`          | Unread messages since cursor (from/since/channel filters), advances cursor                                                                            | ring buffer                            |
+| `join` / `part` | Extra channels on demand; the project channel cannot be parted                                                                                        | channel state                          |
+| `help`          | Op reference with current context (nick, channels)                                                                                                    | —                                      |
 
 ## Background machinery
 
@@ -226,6 +226,7 @@ pi-irc/
 - **P17 (done)** tiered wake trust, spec in the P17 section below: `delivery.wakeTrust` = `account` (default; P15-b semantics) | `project` (account + agent metadata + our project + project-channel membership) | `none` (allowlist only); allowlist globs apply at every tier; `status()` reports the tier; buffered-DM system lines name the tier that blocked them. Live drill on the operator's ergo: `scripts/wake-tier-smoke.mjs` 8/8 (same-project wake, foreign-project/anonymous/stranger buffered with tier-named system lines, allowlist escape hatch at both strict tiers). The drill surfaced a pre-existing NaN pacer: `DeliveryQueue` typed `Required<DeliveryOptions>` but accepted partial opts — raw configs (smokes, embedders) produced a 1 ms busy timer; the constructor now merges defaults per field (231/231 + tsc clean).
 - **P18 (done)** `delivery.wakeOnChannel` — per-agent channel wakes: humans speak in a channel, the *matching* specialist wakes. Each session judges chatter against **its own** `capabilities` string; there is no central routing brain. Gate order is strict and deterministic-first: config scope → own-line skip → sender trust (P17 tiers; an untrusted sender cannot wake even by mentioning) → quiet window → nick mention (deterministic override, no model call) | classifier judgment. The classifier is a pluggable interface riding **pi's model registry** (`ctx.modelRegistry.classify`) — Jev-class "System One" decision models (TypeSafe/OpenRouter/OpenCode/Cloudflare…) through the user's already-configured providers; pi-irc owns no keys and no HTTP; confidence threshold default 0.5; **fail-closed**: lookup errors, `stopReason !== stop`, and sub-threshold confidence never wake. `MessageBuffer.recent()` provides read-only context without touching cursors. Validated: 16 new unit cases (gates, threshold boundary, fail-closed, mention-skip, untrusted-skip, context passing, quiet window) and a live two-specialist drill on the operator's ergo (`scripts/wake-channel-smoke.mjs` 5/5: relevant line wakes only the matching specialist, mention wakes deterministically without the classifier, stranger keywords wake nobody, system lines name the trigger). 247/247 + tsc clean. Gateway decision recorded as ADR-0005 (parked; see `docs/decisions/0005-intercom-irc-gateway-parked.md`).
 - **P20 (done)** nick overhaul + sub-identity contract: default nicks are now `pi-{project}` / `pi-{project}-sub` (new `nick.subTemplate`) — human-readable, session noise lives in the realname where the roster already reads it; `PI_IRC_ROLE=sub` (+ optional `PI_IRC_PARENT`) is the documented orchestrator contract for sub identity, resolving the P17 parked question. Details in the P20 section below.
+- **P21 (done)** outbound line normalization: every send is made wire-legal at enqueue — CR/LF split into one PRIVMSG per content line (NULs stripped, trailing whitespace trimmed, blanks dropped), channels cap at 10 lines with an in-channel truncation marker while DMs are uncapped, ask/reply envelope bodies flatten to single-spaced prose, and drain-time WireError drops buffer a visible system entry. Closes the silent-failure class where `send` reported success for multi-line text the wire then rejected. Details in the P21 section below.
 - **Field note (2026-11-07, worker comms-preference experiment):** two channel-neutral worker subagents (same cwd, both auto-connected to `#pi-pi-irc` with busy presence and a live 433 suffix on the second) were told to ask their supervisor one question and report back, mechanism unspecified. Both picked `intercom` for ask *and* report, first try; neither sent a single IRC message despite being registered. Takeaways: on one machine the purpose-built bus wins on friction and wake reliability (8 ms delivery vs IRC's default-deny wake trust); pi-irc's agent⇄agent lane is the cross-machine / human-inclusive case. If in-project IRC should compete: project-peer wake trust (account-verified agents in the project channel auto-allowlisted) and supervisor-nick hints in spawn prompts. Also surfaced: subagent sessions register as role `main` (role detection can't distinguish child sessions), and a stale v0.4.1 status line — fixed in this commit.
 - **Two-plane drill (2026-11-07, follow-up):** with the division stated up front, a worker ran both planes correctly in one task — supervisor coordination entirely on intercom (ask for parameters, send final report), a simulated stock-client human (`hank`, raw RFC 2812, anonymous, no agent metadata → classified human) delivering a mid-task redirection over IRC in a rendezvous channel, and the deliverable posted back to the channel for human/remote readers. Verified end-to-end in 1 m 59 s. Side finding: the ephemeral rendezvous channel vanished with its history when the last member left (unregistered ergo channel) — durable gateways need the one-time ChanServ REGISTER.
 
@@ -410,16 +411,32 @@ No central router: every session classifies for itself; several specialists may 
 
 **Testing**: `buildRegisterIdentity` picks `subTemplate` for `role=sub` (nick + realname asserted); config defaults cover both templates; entry-level default render (`pi-proj`) updated. 263/263 + tsc clean; live channel verified the conversation that triggered it.
 
+### P21 — Outbound line normalization: every send leaves wire-legal (done in v0.6.2)
+
+**Problem.** Operator report (2026-11-08): agent sends to IRC fail when the text is not wire-wellformed (CR/LF inside the body). Trace: `DeliveryQueue.enqueue` passed the raw string to `chunkText`, the single chunk hit `wire.formatLine` at drain, and its CR/LF guard threw a WireError — _after_ `send` had already returned success. The agent saw "sent"; nothing left the queue. Every multi-line agent message hit this.
+
+**Design.**
+
+- **`normalizeLines` at enqueue** (`lib/delivery.ts`): CR/LF/CRLF break one send into one PRIVMSG per content line; NULs stripped; trailing whitespace trimmed per line (leading indentation survives); blank lines dropped; whitespace-only input throws at enqueue instead of draining an empty queue.
+- **Channel line cap**: channel targets cap at `DEFAULT_CHANNEL_LINE_CAP` = 10 content lines per send (a product cap against pasted-log noise in shared rooms, not a server rule; `channelLineCap` option, 0 disables). The channel receives a final `(… N more lines truncated)` marker; the tool result tells the agent `N of M lines truncated (channel cap)` so it can react (summarize, chunk deliberately). DM targets are uncapped — one receiver, no shared noise.
+- **Envelope flattening** (`lib/rpc.ts`): ask/reply bodies are line-framed protocol — multi-line bodies flatten to single-spaced prose before chunking, and chunk boundaries never end on a space (delivery's trailing trim would eat it and corrupt lossless reassembly; boundary spaces move to the next chunk's head).
+- **Drop visibility**: drain-time WireError drops now buffer a `system` entry in the target conversation (`dropped unsendable message (…)`) besides the log — the sender's only chance to notice, since `send` answered earlier.
+- `SendResult` now reports `{messages, lines, truncated, pending}` (was `{chunks, pending}`); the tool result wording reflects all of them.
+
+**Testing**: 12 new cases across delivery (normalizeLines, per-line messages, cap + marker + DM-uncapped, whitespace-only throws), rpc (multi-line envelope flatten), session (one PRIVMSG per line e2e, cap marker on the wire, drain-death buffers a system entry), tool (truncation wording). Found and fixed en route: the rpc e2e caught that per-line trailing trim broke lossless reply reassembly at space-ending chunk boundaries. 272/272 + tsc clean.
+
 ## Terms
 
-| Term              | Meaning                                                                                                                              |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| project-channel   | The channel rendered from `channels.projectTemplate`; every session of a project auto-joins it; created implicitly by the first JOIN |
-| default channels  | Extra admin-configured channels joined at startup (e.g. a cross-project lobby)                                                       |
-| roster            | Live mapping of channel nicks to pi agents (with project, main/sub role, session id) or humans                                       |
-| buffer cursor     | Per-session read position in a conversation's ring buffer; `read` advances it                                                        |
-| wake-on-DM        | Steering an idle session when a direct message arrives; throttled, never triggered by channel chatter                                |
-| identity metadata | Machine-readable realname (`pi/1 project=… role=… session=…`) announcing an agent over `USER`                                        |
+| Term              | Meaning                                                                                                                                                                |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| project-channel   | The channel rendered from `channels.projectTemplate`; every session of a project auto-joins it; created implicitly by the first JOIN                                   |
+| default channels  | Extra admin-configured channels joined at startup (e.g. a cross-project lobby)                                                                                         |
+| roster            | Live mapping of channel nicks to pi agents (with project, main/sub role, session id) or humans                                                                         |
+| buffer cursor     | Per-session read position in a conversation's ring buffer; `read` advances it                                                                                          |
+| wake-on-DM        | Steering an idle session when a direct message arrives; throttled, never triggered by channel chatter                                                                  |
+| identity metadata | Machine-readable realname (`pi/1 project=… role=… session=…`) announcing an agent over `USER`                                                                          |
+| content line      | One wire-legal line of a send after normalization (NULs stripped, trailing whitespace trimmed, blanks dropped); a multi-line send becomes one PRIVMSG per content line |
+| channel line cap  | Product cap of 10 content lines per channel send; cut lines are never sent — the channel and the sender both see the truncation marker. DMs are uncapped               |
 
 ```
 

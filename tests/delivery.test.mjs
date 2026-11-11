@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { loadViaPi, repoFile } from "./helpers.mjs";
 
-const { DeliveryQueue, chunkText } = await loadViaPi(repoFile("lib", "delivery.ts"));
+const { DeliveryQueue, chunkText, normalizeLines } = await loadViaPi(repoFile("lib", "delivery.ts"));
 
 function mkqueue(sends, opts = {}) {
 	return new DeliveryQueue((target, text) => sends.push({ target, text }), {
@@ -199,8 +199,8 @@ test("partial options fall back to defaults — no NaN pacer timer", async () =>
 		const sent = [];
 		const q = new DeliveryQueue((t, x) => sent.push(x));
 		q.start();
-		assert.equal(q.enqueue("a", "one"), 1);
-		assert.equal(q.enqueue("a", "two"), 1);
+		assert.equal(q.enqueue("a", "one").messages, 1);
+		assert.equal(q.enqueue("a", "two").messages, 1);
 		q.drain(); // defaults pace the timer at 500 ms — drain due sends now
 		q.stop();
 		assert.deepEqual(sent, ["one", "two"], "burst defaults (4) send immediately");
@@ -210,4 +210,55 @@ test("partial options fall back to defaults — no NaN pacer timer", async () =>
 	}
 
 	assert.deepEqual(warnings, [], `no timer warnings, got: ${warnings.join(", ")}`);
+});
+
+// ---- line normalization: every outbound send is made wire-legal here ----
+
+test("normalizeLines: CRLF/CR/LF break lines, trailing ws trimmed, blanks and NULs dropped", () => {
+	assert.deepEqual(normalizeLines("one\r\ntwo\rthree\nfour"), ["one", "two", "three", "four"]);
+	assert.deepEqual(
+		normalizeLines("\tcode block\ntrailing ws   \n\n\n"),
+		["\tcode block", "trailing ws"],
+		"leading indentation survives, trailing ws dies",
+	);
+	assert.deepEqual(normalizeLines("before\0after"), ["beforeafter"], "NUL is an encoding accident, never content");
+	assert.throws(() => normalizeLines(" \n\r\n\t "), /empty after line normalization/);
+});
+
+test("enqueue: multi-line text becomes one message per line", () => {
+	const sent = [];
+	const q = mkqueue(sent);
+	const r = q.enqueue("peer", "l1\r\nl2\nl3");
+	assert.deepEqual(r, { messages: 3, lines: 3, truncated: 0 });
+	q.drain(0);
+	assert.deepEqual(
+		sent.map((s) => s.text),
+		["l1", "l2", "l3"],
+	);
+});
+
+test("enqueue: channel sends cap at channelLineCap with an in-channel marker; DMs are uncapped", () => {
+	const sent = [];
+	const q = mkqueue(sent, { burst: 20, maxChunk: 400 });
+	const lines = Array.from({ length: 13 }, (_, i) => `line ${i + 1}`);
+	const r = q.enqueue("#chan", lines.join("\n"));
+	assert.equal(r.lines, 13);
+	assert.equal(r.truncated, 3);
+	assert.equal(r.messages, 11, "10 kept lines + 1 marker");
+	q.drain(0);
+	assert.deepEqual(
+		sent.map((s) => s.text).slice(-2),
+		["line 10", "(… 3 more lines truncated)"],
+		"cut content never reaches the channel; the marker does",
+	);
+
+	const dm = q.enqueue("peer", lines.join("\n"));
+	assert.equal(dm.truncated, 0);
+	assert.equal(dm.messages, 13, "DM targets have no cap");
+});
+
+test("enqueue: whitespace-only text throws at enqueue, not at drain", () => {
+	const q = mkqueue([]);
+	assert.throws(() => q.enqueue("#chan", "  \n\t\r\n "), /empty after line normalization/);
+	assert.equal(q.pending(), 0);
 });

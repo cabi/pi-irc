@@ -59,6 +59,16 @@ presence list.
 The only inbound that may wake an idle session (ADR-0002). _Avoid_: query
 (IRC's own word — pi-irc says DM everywhere), private message, whisper.
 
+**content line** — one wire-legal line of an outbound send after
+normalization: line breaks in the source text split the send into one
+PRIVMSG per content line, NULs are stripped, trailing whitespace trimmed,
+blank lines dropped. _Avoid_: paragraph, logical line.
+
+**channel line cap** — the product limit (10) of content lines per channel
+send; cut lines are never delivered, and both the channel (truncation
+marker) and the sender (tool result) see what was cut. DMs are uncapped.
+_Avoid_: truncation limit, message limit.
+
 **buffer** — the per-conversation ring buffer holding every inbound message
 until read; sized by `delivery.bufferMax`. **buffer cursor** — the
 per-session read position in one conversation; `read` returns everything past
